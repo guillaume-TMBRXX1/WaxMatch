@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     apify_token: str | None = None
     apify_max_items: int = 20  # annonces max par recherche et par plateforme (le coût en dépend)
     offers_cache_hours: float = 24
+    apify_concurrency: int = 1  # albums analysés en même temps lors d'un scan (2 runs Apify par album)
 
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None

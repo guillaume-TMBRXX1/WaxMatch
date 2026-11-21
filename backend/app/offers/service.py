@@ -192,10 +192,13 @@ async def run_scan(
     platforms: list[str],
     max_items: int,
     cache_hours: float,
+    concurrency: int = 1,
 ) -> None:
     job.running, job.phase, job.started_at, job.total = True, "recherche des annonces", time.time(), len(albums)
     job.estimated_cost_usd = round(len(albums) * sum(COST_PER_SEARCH[p] for p in platforms), 2)
-    sem = asyncio.Semaphore(3)  # 3 albums à la fois (chaque recherche Apify prend 20 à 60 s)
+    # 1 album à la fois par défaut (= 2 runs Apify, un par plateforme) : un compte gratuit limite
+    # la mémoire totale des runs simultanés.
+    sem = asyncio.Semaphore(concurrency)
 
     async def one(album: LibraryAlbum) -> None:
         async with sem:
