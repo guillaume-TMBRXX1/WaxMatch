@@ -42,13 +42,18 @@ async def callback(
     except SpotifyAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    profile = (
-        await http.get(
-            "https://api.spotify.com/v1/me",
-            headers={"Authorization": f"Bearer {tokens.access_token}"},
+    resp = await http.get(
+        "https://api.spotify.com/v1/me",
+        headers={"Authorization": f"Bearer {tokens.access_token}"},
+    )
+    profile = resp.json() if resp.status_code == 200 else {}
+    if not profile.get("id"):
+        # En Development Mode, un compte non ajouté dans "User Management" est refusé ici (403).
+        raise HTTPException(
+            status_code=403,
+            detail="Profil Spotify inaccessible : ce compte est-il autorisé dans le dashboard Spotify (User Management) ?",
         )
-    ).json()
-    tokens.spotify_user_id = profile.get("id")
+    tokens.spotify_user_id = profile["id"]
     tokens.display_name = profile.get("display_name")
 
     session_id = secrets.token_urlsafe(32)
@@ -70,6 +75,7 @@ async def me(spotify: SpotifyClient = Depends(get_spotify)):
 async def logout(request: Request, store: TokenStore = Depends(get_store)):
     session_id = request.session.pop("sid", None)
     if session_id:
+        tokens = await store.get(session_id)
         await store.delete(session_id)
-        request.app.state.library_cache.pop(session_id, None)
+        request.app.state.library_cache.pop(tokens.spotify_user_id if tokens else session_id, None)
     return {"ok": True}

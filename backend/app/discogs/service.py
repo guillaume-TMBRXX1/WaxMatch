@@ -124,19 +124,41 @@ async def find_match(client: DiscogsClient, album: LibraryAlbum, threshold: floa
 
 
 class DiscogsStore:
-    """Correspondances par `match_key`, partagées entre utilisateurs, sauvegardées en JSON si un chemin est donné."""
+    """Correspondances par `match_key`, partagées entre utilisateurs.
 
-    def __init__(self, path: str | None = None):
-        self.path = path
+    Toujours gardées en mémoire pour des lectures instantanées, et persistées :
+    - en base PostgreSQL si un pool est fourni (le fichier JSON éventuel est alors importé une fois) ;
+    - sinon dans un fichier JSON si un chemin est donné.
+    """
+
+    def __init__(self, path: str | None = None, pool=None):
+        self.path = path or None
+        self.pool = pool
         self.matches: dict[str, DiscogsMatch] = {}
         self.offers: dict[str, AlbumOffers] = {}
-        if path and os.path.exists(path):
+        self._dirty: set[str] = set()
+
+    async def load(self) -> None:
+        if self.pool is not None:
+            rows = await self.pool.fetch("select match_key, data from discogs_matches")
+            self.matches = {r["match_key"]: DiscogsMatch.model_validate(r["data"]) for r in rows}
+            rows = await self.pool.fetch("select match_key, data from discogs_offers")
+            self.offers = {r["match_key"]: AlbumOffers.model_validate(r["data"]) for r in rows}
+        if self.path and os.path.exists(self.path):
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(self.path, encoding="utf-8") as f:
                     raw = json.load(f)
-                self.matches = {k: DiscogsMatch.model_validate(v) for k, v in raw.items()}
             except (OSError, ValueError) as exc:
-                log.warning("Cache Discogs illisible (%s), on repart de zéro", exc)
+                log.warning("Cache Discogs illisible (%s), ignoré", exc)
+                raw = {}
+            for key, value in raw.items():
+                if key not in self.matches:
+                    self.matches[key] = DiscogsMatch.model_validate(value)
+                    if self.pool is not None:
+                        self._dirty.add(key)  # import du fichier vers la base
+            if self._dirty:
+                log.info("Import de %d correspondances Discogs du fichier vers la base", len(self._dirty))
+                await self.save()
 
     def get(self, key: str) -> DiscogsMatch | None:
         return self.matches.get(key)
@@ -149,14 +171,45 @@ class DiscogsStore:
 
     def put(self, key: str, match: DiscogsMatch) -> None:
         self.matches[key] = match
+        self._dirty.add(key)
 
-    def save(self) -> None:
-        if not self.path:
+    async def save(self) -> None:
+        if self.pool is not None:
+            keys, self._dirty = list(self._dirty), set()
+            if keys:
+                await self.pool.executemany(
+                    """
+                    insert into discogs_matches (match_key, found, data, matched_at)
+                    values ($1, $2, $3, to_timestamp($4))
+                    on conflict (match_key) do update
+                    set found = excluded.found, data = excluded.data, matched_at = excluded.matched_at
+                    """,
+                    [(k, self.matches[k].found, self.matches[k].model_dump(mode="json"), self.matches[k].matched_at)
+                     for k in keys],
+                )
             return
-        tmp = f"{self.path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({k: v.model_dump() for k, v in self.matches.items()}, f, ensure_ascii=False)
-        os.replace(tmp, self.path)  # écriture atomique
+        self._dirty.clear()
+        if self.path:
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({k: v.model_dump() for k, v in self.matches.items()}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)  # écriture atomique
+
+    def get_offers(self, key: str) -> AlbumOffers | None:
+        return self.offers.get(key)
+
+    async def put_offers(self, key: str, offers: AlbumOffers) -> None:
+        self.offers[key] = offers
+        if self.pool is not None:
+            await self.pool.execute(
+                """
+                insert into discogs_offers (match_key, data, checked_at) values ($1, $2, to_timestamp($3))
+                on conflict (match_key) do update set data = excluded.data, checked_at = excluded.checked_at
+                """,
+                key,
+                offers.model_dump(mode="json"),
+                offers.checked_at,
+            )
 
 
 def apply_match(album: LibraryAlbum, match: DiscogsMatch | None) -> LibraryAlbum:
@@ -222,9 +275,9 @@ async def run_enrichment(
             job.done = i
             job.seconds_per_album = (time.time() - job.started_at) / i
             if i % 10 == 0:
-                store.save()
+                await store.save()
     finally:
-        store.save()
+        await store.save()
         job.running, job.finished_at, job.phase = False, time.time(), "terminé"
 
 

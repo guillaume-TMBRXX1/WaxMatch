@@ -6,10 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import Settings, get_settings
+from app.crypto import TokenCipher
+from app.db import create_pool
 from app.discogs.client import RateLimiter
 from app.discogs.service import DiscogsStore, EnrichJob
 from app.routers import auth, discogs, library
-from app.store import InMemoryTokenStore, TokenStore
+from app.repos import PostgresLibraryRepo
+from app.store import InMemoryTokenStore, PostgresTokenStore, TokenStore
 
 
 def create_app(
@@ -22,16 +25,28 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.http = httpx.AsyncClient(timeout=20, transport=transport)
+        pool = None
+        if settings.database_url:
+            pool = await create_pool(settings.database_url)
+            if store is None:
+                app.state.store = PostgresTokenStore(pool, TokenCipher(settings.session_secret))
+            app.state.library_repo = PostgresLibraryRepo(pool)
+        app.state.db_pool = pool
+        app.state.discogs_store = DiscogsStore(settings.discogs_cache_path, pool)
+        await app.state.discogs_store.load()
         yield
         if app.state.discogs_task and not app.state.discogs_task.done():
             app.state.discogs_task.cancel()
         await app.state.http.aclose()
+        if pool is not None:
+            await pool.close()
 
     app = FastAPI(title="WaxMatch API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store or InMemoryTokenStore()
     app.state.library_cache = {}
-    app.state.discogs_store = DiscogsStore(settings.discogs_cache_path)
+    app.state.library_repo = None
+    app.state.db_pool = None
     app.state.discogs_limiter = RateLimiter(settings.discogs_min_interval)
     app.state.discogs_job = EnrichJob()
     app.state.discogs_task = None
@@ -59,7 +74,16 @@ def create_app(
 
     @app.get("/health", tags=["meta"])
     async def health():
-        return {"status": "ok"}
+        pool = app.state.db_pool
+        if pool is None:
+            return {"status": "ok", "database": "absente (tout est en mémoire)"}
+        try:
+            await pool.fetchval("select 1")
+            discogs = await pool.fetchval("select count(*) from discogs_matches")
+            users = await pool.fetchval("select count(*) from users")
+            return {"status": "ok", "database": "connectée", "users": users, "discogs_matches": discogs}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "dégradé", "database": f"erreur : {exc}"}
 
     return app
 
