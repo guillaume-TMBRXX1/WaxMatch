@@ -30,8 +30,10 @@ async def load_library(request: Request, spotify: SpotifyClient, refresh: bool) 
         return cached[1]
 
     items = [item async for item in spotify.iter_saved_albums(spotify.settings.max_albums)]
-    artist_ids = [a["id"] for it in items for a in it["album"].get("artists", []) if a.get("id")]
-    artists_by_id = await spotify.get_artists(artist_ids)
+    artists_by_id: dict[str, dict] = {}
+    if spotify.settings.spotify_artist_genres:
+        artist_ids = [a["id"] for it in items for a in it["album"].get("artists", []) if a.get("id")]
+        artists_by_id = await spotify.get_artists(artist_ids)
 
     albums = dedupe([normalize_saved_item(it, artists_by_id) for it in items])
     cache[spotify.session_id] = (time.time(), albums)

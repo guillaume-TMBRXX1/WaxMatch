@@ -93,6 +93,7 @@ def _settings(tmp_path):
         frontend_url="https://testserver/done",
         session_secret="s",
         cookie_secure=False,
+        spotify_artist_genres=True,
         discogs_token="DT",
         discogs_min_interval=0,
         discogs_cache_path=str(tmp_path / "discogs.json"),

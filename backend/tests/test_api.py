@@ -15,6 +15,7 @@ SETTINGS = Settings(
     frontend_url="https://testserver/done",
     session_secret="test-secret",
     cookie_secure=False,
+    spotify_artist_genres=True,
 )
 
 
@@ -104,3 +105,21 @@ def test_full_flow():
 
         assert client.post("/auth/logout").json() == {"ok": True}
         assert client.get("/library/albums").status_code == 401
+
+
+def test_artist_genres_disabled_by_default():
+    calls = []
+
+    def spy(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return fake_spotify(request)
+
+    settings = SETTINGS.model_copy(update={"spotify_artist_genres": False})
+    app = create_app(settings, transport=httpx.MockTransport(spy))
+    with TestClient(app, base_url="https://testserver") as client:
+        r = client.get("/auth/login", follow_redirects=False)
+        state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+        client.get("/auth/callback", params={"code": "c", "state": state}, follow_redirects=False)
+        albums = client.get("/library/albums").json()["albums"]
+    assert len(albums) == 2 and all(a["genres"] == [] for a in albums)
+    assert not any(p.startswith("/v1/artists") for p in calls)  # aucune requête artiste

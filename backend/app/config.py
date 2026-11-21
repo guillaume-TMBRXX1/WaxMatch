@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     discogs_min_interval: float = 1.1  # secondes entre deux requêtes (limite Discogs : 60/min)
     discogs_match_threshold: float = 80
 
+    # Genres via les artistes Spotify : vides pour les apps en Development Mode depuis 2026,
+    # et coûteux (une requête par artiste). Discogs fournit désormais genres et styles.
+    spotify_artist_genres: bool = False
+
     # Garde-fous
     max_albums: int = 2000
     library_cache_ttl_seconds: int = 600
