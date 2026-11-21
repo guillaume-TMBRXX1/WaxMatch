@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import asdict, dataclass, field
 
+import httpx
 from rapidfuzz import fuzz
 
 from app.discogs.client import DiscogsClient, DiscogsError
@@ -140,6 +141,7 @@ def apply_match(album: LibraryAlbum, match: DiscogsMatch | None) -> LibraryAlbum
 @dataclass
 class EnrichJob:
     running: bool = False
+    phase: str = "en attente"
     total: int = 0
     done: int = 0
     matched: int = 0
@@ -165,7 +167,8 @@ async def run_enrichment(
 ) -> None:
     todo = [a for a in albums if store.needs_lookup(a.match_key)]
     job.__init__()  # remise à zéro
-    job.running, job.started_at = True, time.time()
+    job.running, job.started_at, job.phase = True, time.time(), "recherche Discogs"
+
     job.total, job.already_known = len(todo), len(albums) - len(todo)
     try:
         for i, album in enumerate(todo, 1):
@@ -174,7 +177,7 @@ async def run_enrichment(
                 store.put(album.match_key, match)
                 job.matched += match.found
                 job.not_found += not match.found
-            except (DiscogsError, OSError) as exc:  # une erreur sur un album n'arrête pas les autres
+            except (DiscogsError, httpx.HTTPError, OSError) as exc:  # une erreur sur un album n'arrête pas les autres
                 job.errors += 1
                 job.last_error = str(exc)[:200]
             job.done = i
@@ -183,7 +186,7 @@ async def run_enrichment(
                 store.save()
     finally:
         store.save()
-        job.running, job.finished_at = False, time.time()
+        job.running, job.finished_at, job.phase = False, time.time(), "terminé"
 
 
 # --------------------------------------------------------------------------- offres vinyles
