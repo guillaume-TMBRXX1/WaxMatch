@@ -22,21 +22,31 @@ class AlbumsResponse(BaseModel):
 
 
 async def load_library(request: Request, spotify: SpotifyClient, refresh: bool) -> list[LibraryAlbum]:
-    """Récupère, enrichit (genres), normalise et dédoublonne la bibliothèque. Mise en cache par session."""
-    cache: dict = request.app.state.library_cache
-    ttl = spotify.settings.library_cache_ttl_seconds
-    cached = cache.get(spotify.session_id)
-    if cached and not refresh and time.time() - cached[0] < ttl:
+    """Bibliothèque normalisée : mémoire, puis base de données, puis Spotify (`refresh=true` force Spotify)."""
+    state = request.app.state
+    settings = spotify.settings
+    user_key = spotify.tokens.spotify_user_id or spotify.session_id
+    cached = state.library_cache.get(user_key)
+    if cached and not refresh and time.time() - cached[0] < settings.library_cache_ttl_seconds:
         return cached[1]
 
-    items = [item async for item in spotify.iter_saved_albums(spotify.settings.max_albums)]
+    repo = state.library_repo
+    if repo is not None and not refresh and spotify.tokens.spotify_user_id:
+        stored = await repo.load(spotify.tokens.spotify_user_id)
+        if stored and time.time() - stored[0].timestamp() < settings.library_max_age_hours * 3600:
+            state.library_cache[user_key] = (time.time(), stored[1])
+            return stored[1]
+
+    items = [item async for item in spotify.iter_saved_albums(settings.max_albums)]
     artists_by_id: dict[str, dict] = {}
-    if spotify.settings.spotify_artist_genres:
+    if settings.spotify_artist_genres:
         artist_ids = [a["id"] for it in items for a in it["album"].get("artists", []) if a.get("id")]
         artists_by_id = await spotify.get_artists(artist_ids)
 
     albums = dedupe([normalize_saved_item(it, artists_by_id) for it in items])
-    cache[spotify.session_id] = (time.time(), albums)
+    if repo is not None and spotify.tokens.spotify_user_id:
+        await repo.save(spotify.tokens.spotify_user_id, albums)
+    state.library_cache[user_key] = (time.time(), albums)
     return albums
 
 

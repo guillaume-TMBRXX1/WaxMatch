@@ -32,14 +32,15 @@ Navigateur ──► Next.js (Vercel) ──► FastAPI (Railway) ──► Spot
 - Depuis février 2026, le *Development Mode* exige un compte Premium pour le propriétaire de l'app et plafonne à 5 utilisateurs. Pour ouvrir au public, il faudra demander l'*Extended Quota Mode* à Spotify. Il faut donc prévoir dès maintenant une page de confidentialité et un usage conforme aux règles développeur Spotify.
 - Les genres d'albums reviennent souvent vides et ceux des artistes peuvent manquer : le code le tolère (`albums_without_genre`).
 
-## Étape 2 — Base de données (Supabase PostgreSQL)
+## Étape 2 — Base de données (Supabase PostgreSQL) ✅ (premier jet)
 - Tables : `users` (id Spotify, nom, ville et code postal pour la géolocalisation, préférences), `oauth_tokens` (refresh_token **chiffré**), `albums` (catalogue normalisé partagé, clé `match_key` + UPC), `user_albums` (added_at, tags), `wishlist`, `listings` (annonces mises en cache avec `fetched_at`), `searches` (journal des runs Apify, coûts).
 - Implémenter `PostgresTokenStore` derrière le `Protocol` existant (`app/store.py`) pour qu'aucun autre fichier ne change.
-- Migrations SQL versionnées dans `backend/migrations/` et appliquées depuis l'éditeur SQL de Supabase.
+- Migrations SQL versionnées dans `backend/app/migrations/`, appliquées automatiquement au démarrage de l'API.
+- Fait : `users`, `oauth_tokens` (chiffrés), `sessions` (hachées), `user_albums`, `library_syncs`, `discogs_matches`, `discogs_offers`, RLS activée partout. Reste : `wishlist`, `listings`, `searches` (avec l'étape 3).
 - Synchronisation incrémentale de la bibliothèque : on s'arrête dès qu'on retrouve un `added_at` déjà connu.
 
 ## Étape 3 — Recherche des offres
-**3a. Sources**
+**3a. Sources** — Discogs ✅ (genres, styles, prix ; 77 % des albums trouvés)
 - **Discogs** : API officielle (jeton personnel gratuit). Recherche par **UPC/code-barres**, puis par artiste + titre en format Vinyl. `marketplace/stats` donne le prix le plus bas et le nombre d'exemplaires en vente. C'est la source la plus fiable, à brancher en premier.
 - **Vinted, Leboncoin** : Actors Apify existants du Store (à évaluer : coût par résultat, champs disponibles comme les frais de port et la localisation, fiabilité), sinon un Actor maison. Appel via `apify-client` (Python), en asynchrone (lancement du run, puis récupération du dataset ou webhook).
 - ⚖️ Les CGU de Vinted et Leboncoin encadrent strictement l'extraction automatisée. On ne lance que des requêtes ciblées à faible volume, on ne stocke que le minimum (titre, prix, lien, localisation), on renvoie systématiquement vers l'annonce d'origine et on ne republie aucune photo. À valider avant toute ouverture publique.

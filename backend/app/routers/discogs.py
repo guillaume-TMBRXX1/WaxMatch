@@ -66,7 +66,7 @@ async def album_vinyl_offers(
         raise HTTPException(status_code=404, detail="Album absent de ta bibliothèque Spotify")
 
     store = request.app.state.discogs_store
-    cached = store.offers.get(album.match_key)
+    cached = store.get_offers(album.match_key)
     if cached and not refresh and time.time() - cached.checked_at < OFFERS_TTL_SECONDS:
         return cached
 
@@ -75,9 +75,9 @@ async def album_vinyl_offers(
         if match is None or refresh:
             match = await find_match(discogs, album, request.app.state.settings.discogs_match_threshold)
             store.put(album.match_key, match)
-            store.save()
+            await store.save()
         offers = await album_offers(discogs, match)
     except DiscogsError as exc:
         raise HTTPException(status_code=502, detail=f"Discogs indisponible : {exc}") from exc
-    store.offers[album.match_key] = offers
+    await store.put_offers(album.match_key, offers)
     return offers

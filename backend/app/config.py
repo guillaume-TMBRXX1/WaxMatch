@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # et coûteux (une requête par artiste). Discogs fournit désormais genres et styles.
     spotify_artist_genres: bool = False
 
+    # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
+    database_url: str | None = None
+    # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.
+    library_max_age_hours: int = 24
+
     # Garde-fous
     max_albums: int = 2000
     library_cache_ttl_seconds: int = 600
