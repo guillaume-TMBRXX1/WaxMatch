@@ -142,7 +142,8 @@ def score_listings(
             "deal": round(deal_score(c.delivered_total, discogs_reference), 1),
             "proximity": round(proximity, 1),
             "trust": round((condition_score(c.condition, c.title) + seller) / 2, 1),
-            "freshness": freshness_score(parse_date(c.published_at, now), now),
+            # Vinted : les anciens résultats en cache portaient la date de collecte, pas de publication.
+            "freshness": freshness_score(None if c.platform == "vinted" else parse_date(c.published_at, now), now),
         }
         c.components = components
         c.score = round(sum(components[k] * weights[k] for k in weights) / 100, 1)

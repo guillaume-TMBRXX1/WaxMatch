@@ -30,8 +30,25 @@ _EXCLUDED = re.compile(
 # --------------------------------------------------------------------------- filtrage
 
 
+# 2ememain : la catégorie est dans l'URL (/v/cd-dvd/cd-jazz-blues/…) et les publicités ont un
+# identifiant en "a…" (/a169078540-…) au lieu de "m…".
+_2EMEMAIN_CD = re.compile(r"2ememain\.be/v/[^/]+/(?:cd|dvd)[-/]")
+_2EMEMAIN_AD = re.compile(r"2ememain\.be/.*/a\d+-")
+# Mots génériques d'une annonce, ignorés pour vérifier un album éponyme ("Bo Diddley" de Bo Diddley).
+_GENERIC = set(
+    "vinyle vinyles vinyl vinyls lp lps 33t 45t 33 45 tours tour rpm album disque disques plaat record records "
+    "original originale pressage press persing edition reissue re neuf new mint tres bon etat used gebraucht "
+    "occasion vintage collector rare stereo mono de du des la le les et the a and of by st s t self titled eponyme "
+    "same lot uk us usa france fr be".split()
+)
+
+
 def judge(album: LibraryAlbum, listing: Listing, threshold: float = 85) -> tuple[bool, str, float]:
     """L'annonce correspond-elle à l'album, et est-ce bien un disque ? -> (gardée, raison, score)."""
+    if _2EMEMAIN_AD.search(listing.url):
+        return False, "publicité (annonce sponsorisée)", 0.0
+    if _2EMEMAIN_CD.search(listing.url):
+        return False, "objet exclu : catégorie CD/DVD", 0.0
     text = fold(listing.title)
     excluded = _EXCLUDED.search(text)
     if excluded:
@@ -54,6 +71,14 @@ def judge(album: LibraryAlbum, listing: Listing, threshold: float = 85) -> tuple
         title_score = fuzz.partial_ratio(title, text)
     if title_score < threshold:
         return False, "titre de l'album absent", title_score
+
+    # Album éponyme : le titre est déjà couvert par le nom de l'artiste. On vérifie qu'il ne reste
+    # pas un autre titre dans l'annonce ("Bo Diddley 'the London sessions'").
+    if title == artist_key(album.primary_artist) or title == fold(album.primary_artist):
+        leftover = [w for w in text.split() if w not in set(fold(album.primary_artist).split()) | _GENERIC
+                    and not w.isdigit()]
+        if len(leftover) > 1:
+            return False, f"autre album de l'artiste (« {' '.join(leftover[:4])} »)", 0.0
     return True, "ok", round((artist_score + title_score) / 2, 1)
 
 
