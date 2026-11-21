@@ -16,8 +16,11 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 | GET | `/auth/callback` | Retour OAuth : échange le code, ouvre la session |
 | GET | `/auth/me` | Profil Spotify connecté |
 | POST | `/auth/logout` | Ferme la session |
-| GET | `/library/albums` | Albums normalisés. `sort=added_at\|artist\|title\|release_year\|popularity\|genre`, `genre=`, `include_singles=`, `refresh=` |
-| GET | `/library/genres` | Genres de la bibliothèque et nombre d'albums par genre |
+| GET | `/library/albums` | Albums normalisés. `sort=added_at\|artist\|title\|release_year\|popularity\|genre`, `genre=` (genres et styles), `on_discogs=`, `include_singles=`, `refresh=` |
+| GET | `/library/genres` | Genres et styles de la bibliothèque, avec le nombre d'albums |
+| POST | `/discogs/enrich` | Lance en arrière-plan la recherche Discogs (genres, styles, fiche) des albums non traités |
+| GET | `/discogs/enrich/status` | Avancée de la recherche Discogs |
+| GET | `/discogs/albums/{spotify_id}` | Éditions vinyles d'un album et prix Discogs les plus bas (hors port) |
 | GET | `/health` | Contrôle de santé (Railway) |
 
 Lancement (Colab ou Railway) : `uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000`, depuis `backend/`.

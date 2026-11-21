@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     cookie_secure: bool = True
 
+    # Discogs : jeton personnel (Settings -> Developers sur discogs.com)
+    discogs_token: str | None = None
+    discogs_user_agent: str = "WaxMatch/0.1"
+    discogs_currency: str = "EUR"
+    discogs_cache_path: str | None = None  # fichier JSON pour garder les correspondances entre redémarrages
+    discogs_min_interval: float = 1.1  # secondes entre deux requêtes (limite Discogs : 60/min)
+    discogs_match_threshold: float = 80
+
     # Garde-fous
     max_albums: int = 2000
     library_cache_ttl_seconds: int = 600

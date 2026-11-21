@@ -11,6 +11,8 @@ from datetime import datetime
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 
+from app.discogs.models import DiscogsMatch
+
 # Mots qui signalent une mention éditoriale sans intérêt pour trouver le vinyle.
 _EDITION_WORDS = (
     r"remaster(?:ed)?|deluxe|expanded|anniversary|edition|[ée]dition|version|bonus|"
@@ -81,12 +83,14 @@ class LibraryAlbum(BaseModel):
     spotify_url: str | None = None
     added_at: datetime | None = None
     genres: list[str] = []
+    styles: list[str] = []  # styles Discogs, plus fins que les genres (ex. "House", "Shoegaze")
     # Indisponible via Spotify pour les nouvelles apps (audio-features fermé en nov. 2024) ;
     # sera renseigné par une source externe en phase 2.
     energy: float | None = None
     match_key: str
     search_query: str
     duplicates: list[str] = []  # autres ID Spotify fusionnés (deluxe, remaster…)
+    discogs: DiscogsMatch | None = None
 
 
 def _release_year(album: dict) -> int | None:

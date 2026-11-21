@@ -2,6 +2,7 @@ import httpx
 from fastapi import Depends, HTTPException, Request
 
 from app.config import Settings
+from app.discogs.client import DiscogsClient
 from app.spotify.client import SpotifyClient
 from app.store import TokenStore
 
@@ -16,6 +17,22 @@ def get_http(request: Request) -> httpx.AsyncClient:
 
 def get_store(request: Request) -> TokenStore:
     return request.app.state.store
+
+
+def get_discogs(
+    request: Request,
+    settings: Settings = Depends(get_settings_dep),
+    http: httpx.AsyncClient = Depends(get_http),
+) -> DiscogsClient:
+    if not settings.discogs_token:
+        raise HTTPException(status_code=503, detail="Discogs non configuré : ajoute le secret DISCOGS_TOKEN")
+    return DiscogsClient(
+        http,
+        settings.discogs_token,
+        settings.discogs_user_agent,
+        request.app.state.discogs_limiter,
+        settings.discogs_currency,
+    )
 
 
 async def get_spotify(
