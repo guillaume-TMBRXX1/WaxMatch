@@ -21,15 +21,23 @@ async def start_enrichment(
 ):
     """Lance (en arrière-plan) la recherche Discogs de tous les albums pas encore traités."""
     state = request.app.state
-    if not state.discogs_job.running:
-        albums = await load_library(request, spotify, refresh=False)
-        state.discogs_task = asyncio.create_task(
-            run_enrichment(
-                discogs, state.discogs_store, state.discogs_job, albums, state.settings.discogs_match_threshold
-            )
-        )
-        await asyncio.sleep(0)  # laisse la tâche initialiser ses compteurs
-    return state.discogs_job.status()
+    job = state.discogs_job
+    if not job.running:
+        # Tout se passe en arrière-plan, y compris le chargement de la bibliothèque Spotify :
+        # la réponse est immédiate (une requête trop longue serait coupée par le tunnel ngrok).
+        job.__init__()
+        job.running, job.phase = True, "chargement de la bibliothèque Spotify"
+
+        async def load_then_enrich() -> None:
+            try:
+                albums = await load_library(request, spotify, refresh=False)
+            except Exception as exc:  # noqa: BLE001 - l'erreur est exposée dans le statut
+                job.running, job.phase, job.last_error = False, "erreur", str(exc)[:200]
+                return
+            await run_enrichment(discogs, state.discogs_store, job, albums, state.settings.discogs_match_threshold)
+
+        state.discogs_task = asyncio.create_task(load_then_enrich())
+    return job.status()
 
 
 @router.get("/enrich/status")

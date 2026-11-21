@@ -93,6 +93,7 @@ def _settings(tmp_path):
         frontend_url="https://testserver/done",
         session_secret="s",
         cookie_secure=False,
+        spotify_artist_genres=True,
         discogs_token="DT",
         discogs_min_interval=0,
         discogs_cache_path=str(tmp_path / "discogs.json"),
@@ -114,12 +115,13 @@ def test_enrichment_and_offers(tmp_path):
         _login(client)
 
         started = client.post("/discogs/enrich").json()
-        assert started["total"] == 2
+        assert started["running"] is True  # réponse immédiate, le travail continue en arrière-plan
         for _ in range(100):
             status = client.get("/discogs/enrich/status").json()
             if not status["running"]:
                 break
             time.sleep(0.02)
+        assert status["total"] == 2 and status["phase"] == "terminé"
         assert status["matched"] == 1 and status["not_found"] == 1 and status["errors"] == 0
 
         albums = {a["title"]: a for a in client.get("/library/albums").json()["albums"]}
@@ -145,7 +147,13 @@ def test_enrichment_and_offers(tmp_path):
     app2 = create_app(settings, transport=httpx.MockTransport(fake_world))
     with TestClient(app2, base_url="https://testserver") as client:
         _login(client)
-        assert client.post("/discogs/enrich").json()["already_known"] == 2
+        client.post("/discogs/enrich")
+        for _ in range(100):
+            status = client.get("/discogs/enrich/status").json()
+            if not status["running"]:
+                break
+            time.sleep(0.02)
+        assert status["already_known"] == 2 and status["total"] == 0
 
 
 def test_discogs_not_configured(tmp_path):
