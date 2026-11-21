@@ -4,6 +4,7 @@
 
 Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleures offres de vinyles d'occasion.
 
+- `frontend/` : site Next.js « Glass éditorial », déployé sur Vercel (voir `frontend/README.md`)
 - `backend/` : API FastAPI (connexion Spotify, bibliothèque normalisée, puis recherche et scoring des offres)
 - `notebook.ipynb` : lance l'API dans Google Colab derrière un tunnel HTTPS (mode d'emploi dans le notebook)
 - `docs/ROADMAP.md` : feuille de route complète
