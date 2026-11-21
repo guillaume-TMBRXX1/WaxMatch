@@ -71,7 +71,7 @@ class AlbumListings(BaseModel):
     spotify_id: str
     artist: str
     title: str
-    discogs_reference: float | None = None  # prix vinyle le plus bas sur Discogs (hors port)
+    discogs_reference: float | None = None  # prix Discogs typique livré (médiane des éditions + port)
     listings: list[ScoredListing]  # du meilleur score au moins bon
     unreachable: list[ScoredListing] = []  # ni livrable chez toi, ni dans ton rayon de main propre
     searches: list[PlatformSearch]

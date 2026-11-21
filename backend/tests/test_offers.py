@@ -406,8 +406,9 @@ def test_scan_fetches_discogs_reference_and_best_sorts_by_deal():
         assert status["phase"] == "terminé"
         best = client.get("/offers/best").json()
         row = best["albums"][0]
-        assert best["sort"] == "deal" and row["discogs_reference"] == 29.9
-        assert row["vs_discogs"] == round(row["best"]["delivered_total"] / 29.9, 2)
+        # Médiane des éditions en vente (29,90 € et 85 €) + 8 € de port estimé.
+        assert best["sort"] == "deal" and row["discogs_reference"] == 65.45
+        assert row["vs_discogs"] == round(row["best"]["delivered_total"] / 65.45, 2)
 
 
 def test_backfill_discogs_references():
@@ -427,4 +428,42 @@ def test_backfill_discogs_references():
                 break
             time.sleep(0.02)
         assert status["done"] == 1 and status["albums_with_offers"] == 1
-        assert client.get("/offers/best").json()["albums"][0]["discogs_reference"] == 29.9
+        assert client.get("/offers/best").json()["albums"][0]["discogs_reference"] == 65.45
+
+
+def test_discogs_reference_is_median_plus_shipping():
+    from app.discogs.models import AlbumOffers, DiscogsMatch, VinylOffer
+    from app.offers.scoring import discogs_reference_price
+
+    def offer(price, n):
+        return VinylOffer(release_id=1, url="u", sell_url="s", lowest_price=price, num_for_sale=n)
+
+    # Cas réel « Super Session » : un exemplaire à 0,68 € ne doit pas servir de référence.
+    offers = AlbumOffers(match=DiscogsMatch(found=True), offers=[offer(0.68, 3), offer(9, 12), offer(14, 5), offer(None, 0)])
+    assert discogs_reference_price(offers) == 17.0  # médiane(0,68 ; 9 ; 14) = 9 + 8
+    assert discogs_reference_price(AlbumOffers(match=DiscogsMatch(found=True))) is None
+    assert discogs_reference_price(None) is None
+
+
+def test_improved_filter_applies_to_cached_results():
+    """Les faux positifs déjà en cache (Bo Diddley CD, publicité Catawiki) disparaissent sans nouveau run."""
+    from app.offers.models import PlatformSearch
+
+    apify = FakeApify()
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        cd = Listing(platform="2ememain", external_id="m1", title="Daft Punk Discovery", price=4, total_known=4,
+                     url="https://www.2ememain.be/v/cd-dvd/cd-pop/m1-daft-punk-discovery")
+        good = Listing(platform="2ememain", external_id="m2", title="Daft Punk Discovery vinyle", price=20,
+                       total_known=20, url="https://www.2ememain.be/v/cd-dvd/vinyles-pop/m2-daft-punk-discovery")
+        store = client.app.state.offers_store
+        store.searches[("2ememain", "daft punk|discovery")] = PlatformSearch(
+            platform="2ememain", query="q", listings=[cd, good]
+        )
+        store.searches[("vinted", "daft punk|discovery")] = PlatformSearch(platform="vinted", query="q")
+        data = client.get("/offers/albums/al1").json()
+        assert [l["external_id"] for l in data["listings"]] == ["m2"]
+        rejected = next(s for s in data["searches"] if s["platform"] == "2ememain")["rejected"]
+        assert rejected[0]["reason"] == "objet exclu : catégorie CD/DVD"
+        assert apify.calls == []  # tout venait du cache

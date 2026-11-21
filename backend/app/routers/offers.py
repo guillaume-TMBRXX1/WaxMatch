@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.deps import get_apify, get_spotify
 from app.offers.apify import ApifyClient
 from app.offers.models import AlbumListings
+from app.offers.scoring import discogs_reference_price
 from app.offers.service import COST_PER_SEARCH, ScanJob, album_listings, build_album_listings, run_scan
 from app.routers.library import load_library
 from app.spotify.client import SpotifyClient
@@ -23,11 +24,11 @@ async def user_settings(request: Request, spotify: SpotifyClient, platforms: lis
 
 
 async def discogs_reference(request: Request, album: LibraryAlbum, fetch: bool) -> float | None:
-    """Prix vinyle le plus bas sur Discogs : cache, ou interrogation si `fetch` et Discogs configuré."""
+    """Prix Discogs typique livré (voir discogs_reference_price) : cache, ou interrogation si `fetch`."""
     store = request.app.state.discogs_store
     cached = store.get_offers(album.match_key)
     if cached is not None or not fetch:
-        return cached.best_price if cached else None
+        return discogs_reference_price(cached)
     match = store.get(album.match_key)
     if not (match and match.found and request.app.state.settings.discogs_token):
         return None
@@ -39,7 +40,7 @@ async def discogs_reference(request: Request, album: LibraryAlbum, fetch: bool) 
     except Exception:  # noqa: BLE001 - la référence Discogs est un bonus, pas un prérequis
         return None
     await store.put_offers(album.match_key, offers)
-    return offers.best_price
+    return discogs_reference_price(offers)
 
 
 @router.get("/albums/{spotify_id}", response_model=AlbumListings)
