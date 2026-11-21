@@ -3,6 +3,7 @@
 Formats calibrés sur de vrais runs (novembre 2026) :
 - Vinted   : piotrv1001/vinted-listings-scraper
 - Leboncoin : piotrv1001/leboncoin-listings-scraper
+- 2ememain : piotrv1001/2ememain-listings-scraper (Belgique)
 """
 
 import re
@@ -14,6 +15,8 @@ from app.offers.models import Listing
 PROXY = {"useApifyProxy": True, "apifyProxyGroups": ["RESIDENTIAL"]}
 
 _FORMATS = [
+    (re.compile(r"\b12\s*(?:\"|''|pouces|inch)", re.I), "LP"),
+    (re.compile(r"\b7\s*(?:\"|''|pouces|inch)", re.I), "45T (7\")"),
     (re.compile(r"\b(?:3|triple)\s*(?:x\s*)?lp\b|\b3lp\b", re.I), "3LP"),
     (re.compile(r"\b(?:2|double)\s*(?:x\s*)?lp\b|\b2lp\b|\bdouble (?:album|vinyle)\b", re.I), "2LP"),
     (re.compile(r"\b33\s*(?:t\b|tours?\b|rpm\b)", re.I), "33T"),
@@ -59,7 +62,7 @@ def parse_vinted(item: dict) -> Listing | None:
         shippable=True,  # Vinted : envoi uniquement
         seller_name=seller.get("username"),
         seller_is_pro=seller.get("isBusiness"),
-        published_at=item.get("scrapedAt"),
+        published_at=None,  # l'Actor ne donne que la date de collecte, pas celle de publication
     )
 
 
@@ -86,6 +89,7 @@ def parse_leboncoin(item: dict) -> Listing | None:
         city=loc.get("city"),
         zipcode=loc.get("zipcode"),
         department=loc.get("department"),
+        country=loc.get("country") or "FR",
         latitude=_num(loc.get("latitude")),
         longitude=_num(loc.get("longitude")),
         shippable=shippable,
@@ -97,18 +101,52 @@ def parse_leboncoin(item: dict) -> Listing | None:
     )
 
 
+_2EMEMAIN_ID = re.compile(r"/(m\d+)-")
+_NO_PRICE = {"SEE_DESCRIPTION", "NOTK", "RESERVED", "EXCHANGE", "FREE"}
+
+
+def parse_2ememain(item: dict) -> Listing | None:
+    url = item.get("url")
+    if not url:
+        return None
+    found = _2EMEMAIN_ID.search(url)
+    price_type = item.get("priceType")
+    price = _num(item.get("price"))
+    if price_type in _NO_PRICE and not price:
+        price = None
+    return Listing(
+        platform="2ememain",
+        external_id=found.group(1) if found else url,
+        title=item.get("title") or "",
+        url=url,
+        price=price,
+        price_type=price_type,
+        total_known=price,  # pas de frais acheteur sur 2ememain
+        photo_url=item.get("imageUrl"),
+        format_hint=format_hint(item.get("title") or ""),
+        city=item.get("city"),
+        country="BE",
+        seller_name=item.get("sellerName"),
+        seller_is_pro=item.get("isCommercialAd"),
+        published_at=item.get("date"),
+    )
+
+
+VINTED_DOMAINS = {"BE": "vinted.be", "FR": "vinted.fr", "LU": "vinted.lu", "NL": "vinted.nl", "ES": "vinted.es"}
+
+
 @dataclass(frozen=True)
 class PlatformConfig:
     actor_id: str
-    build_input: Callable[[str, int], dict]
+    build_input: Callable[[str, int, str], dict]  # (recherche, nb max, pays de l'acheteur)
     parse: Callable[[dict], Listing | None]
 
 
 PLATFORMS: dict[str, PlatformConfig] = {
     "vinted": PlatformConfig(
         actor_id="piotrv1001/vinted-listings-scraper",
-        build_input=lambda query, n: {
-            "domain": "vinted.fr",
+        build_input=lambda query, n, country: {
+            "domain": VINTED_DOMAINS.get(country, "vinted.fr"),
             "searchQueries": [query],
             "maxItems": n,
             "includeSellerDetails": False,
@@ -119,7 +157,7 @@ PLATFORMS: dict[str, PlatformConfig] = {
     ),
     "leboncoin": PlatformConfig(
         actor_id="piotrv1001/leboncoin-listings-scraper",
-        build_input=lambda query, n: {
+        build_input=lambda query, n, country: {
             "searchQueries": [query],
             "maxItems": n,
             "maxPages": 2,
@@ -129,5 +167,16 @@ PLATFORMS: dict[str, PlatformConfig] = {
             "proxyConfiguration": PROXY,
         },
         parse=parse_leboncoin,
+    ),
+    "2ememain": PlatformConfig(
+        actor_id="piotrv1001/2ememain-listings-scraper",
+        build_input=lambda query, n, country: {
+            "searchQuery": query,
+            "maxItems": n,
+            "sort": "relevance",
+            "includeDetails": False,
+            "proxyConfiguration": {"useApifyProxy": True},
+        },
+        parse=parse_2ememain,
     ),
 }

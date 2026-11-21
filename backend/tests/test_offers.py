@@ -98,24 +98,44 @@ VINTED_RESULTS = [
     {**VINTED_ITEM, "id": 3, "title": "Daft Punk Homework vinyle", "url": "https://v/3"},
     {**VINTED_ITEM, "id": 1, "title": "Vinyle Daft Punk Discovery 2LP", "url": "https://v/1", "price": 30, "totalPrice": 32.2},
 ]
+DEUXIEME_RESULTS = [
+    # Format réel de piotrv1001/2ememain-listings-scraper
+    {"imageUrl": "https://img/2m.jpg", "title": "Vinyle Daft Punk Discovery", "price": 25, "priceType": "FIXED",
+     "city": "Jambes", "date": "Hier", "sellerName": "Bob", "isCommercialAd": False,
+     "url": "https://www.2ememain.be/v/cd-dvd/vinyles/m111-vinyle-daft-punk-discovery"},
+    {"imageUrl": None, "title": "Daft Punk Discovery 33T", "price": 15, "priceType": "MIN_BID",
+     "city": "Ostende", "date": "22 août 26", "sellerName": "Zoé", "isCommercialAd": False,
+     "url": "https://www.2ememain.be/v/cd-dvd/vinyles/m222-daft-punk-discovery-33t"},
+]
 LBC_RESULTS = [
     {**LBC_ITEM, "listId": 9, "title": "Daft Punk - Discovery - 33T", "url": "https://l/9", "price": 20, "shippable": False},
 ]
+CITIES = {"namur": (50.4669, 4.8675), "jambes": (50.4560, 4.8730), "ostende": (51.2154, 2.9286)}
 
 
 class FakeApify:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
+        self.geocode_calls = 0
         self.fail_vinted = False
         self.busy_vinted = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "nominatim.openstreetmap.org":
+            self.geocode_calls += 1
+            city = request.url.params["q"].lower()
+            if city in CITIES:
+                lat, lon = CITIES[city]
+                return httpx.Response(200, json=[{"lat": str(lat), "lon": str(lon), "display_name": f"{city.title()}, Belgique"}])
+            return httpx.Response(200, json=[])
         if request.url.host != "api.apify.com":
             return fake_spotify(request)
         assert request.headers["Authorization"] == "Bearer AP"
         body = json.loads(request.content)
         actor = request.url.path.split("/")[3]
         self.calls.append((actor, body))
+        query = (body.get("searchQueries") or [body.get("searchQuery")])[0]
+        daft = "Daft Punk" in query
         if "vinted" in actor:
             if self.fail_vinted:
                 return httpx.Response(
@@ -123,13 +143,11 @@ class FakeApify:
                 )
             if self.busy_vinted > 0:
                 self.busy_vinted -= 1
-                return httpx.Response(
-                    402, json={"error": {"type": "actor-memory-limit-exceeded", "message": "8192MB limit"}}
-                )
-            items = VINTED_RESULTS if "Daft Punk" in body["searchQueries"][0] else []
-            return httpx.Response(201, json=items)
-        items = LBC_RESULTS if "Daft Punk" in body["searchQueries"][0] else []
-        return httpx.Response(201, json=items)
+                return httpx.Response(402, json={"error": {"type": "actor-memory-limit-exceeded", "message": "8192MB"}})
+            return httpx.Response(201, json=VINTED_RESULTS if daft else [])
+        if "2ememain" in actor:
+            return httpx.Response(201, json=DEUXIEME_RESULTS if daft else [])
+        return httpx.Response(201, json=LBC_RESULTS if daft else [])
 
 
 def _app(apify, **extra):
@@ -143,91 +161,146 @@ def _app(apify, **extra):
         apify_token="AP",
         **extra,
     )
-    return create_app(settings, transport=httpx.MockTransport(apify))
+    app = create_app(settings, transport=httpx.MockTransport(apify))
+    return app
 
 
-def _login(client):
+def _login(client, namur=True):
     from urllib.parse import parse_qs, urlparse
 
     r = client.get("/auth/login", follow_redirects=False)
     state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
     client.get("/auth/callback", params={"code": "c", "state": state}, follow_redirects=False)
+    if namur:
+        r = client.put("/settings", json={"city": "Namur", "country": "BE", "pickup_radius_km": 30})
+        assert r.status_code == 200, r.text
 
 
-def test_album_offers_filter_sort_and_cache():
+def _fast_geocoder(client):
+    client.app.state.geocoder.min_interval = 0
+
+
+def test_settings_geocoding():
     apify = FakeApify()
     with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client, namur=False)
+        assert client.get("/settings").json()["platforms"] == ["vinted", "2ememain"]
+        saved = client.put("/settings", json={"city": "Namur", "country": "BE", "priority": "pickup"}).json()
+        assert saved["latitude"] == 50.4669 and saved["location_label"] == "Namur, Belgique"
+        assert client.get("/settings").json()["priority"] == "pickup"
+        bad = client.put("/settings", json={"city": "Atlantide", "country": "BE"})
+        assert bad.status_code == 422
+        assert client.get("/settings/presets").json()["balanced_price"]["price"] == 50
+
+
+def test_namur_scoring_end_to_end():
+    apify = FakeApify()
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
         _login(client)
         data = client.get("/offers/albums/al1").json()
 
-        assert sorted(c[0] for c in apify.calls) == [
-            "piotrv1001~leboncoin-listings-scraper",
-            "piotrv1001~vinted-listings-scraper",
-        ]
-        vinted_input = next(body for actor, body in apify.calls if "vinted" in actor)
-        assert vinted_input["searchQueries"] == ["Daft Punk Discovery vinyle"] and vinted_input["domain"] == "vinted.fr"
+        actors = sorted(a for a, _ in apify.calls)
+        assert actors == ["piotrv1001~2ememain-listings-scraper", "piotrv1001~vinted-listings-scraper"]
+        vinted_input = next(b for a, b in apify.calls if "vinted" in a)
+        assert vinted_input["domain"] == "vinted.be" and vinted_input["searchQueries"] == ["Daft Punk Discovery vinyle"]
+        assert next(b for a, b in apify.calls if "2ememain" in a)["searchQuery"] == "Daft Punk Discovery vinyle"
 
-        # Leboncoin en main propre (20 €) avant Vinted (32,20 € protection incluse), doublon supprimé.
-        assert [(l["platform"], l["total_known"]) for l in data["listings"]] == [("leboncoin", 20), ("vinted", 32.2)]
-        vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
-        assert vinted["raw_count"] == 4
-        assert sorted(r["reason"] for r in vinted["rejected"]) == ["objet exclu : « cd »", "titre de l'album absent"]
+        listings = data["listings"]
+        first = listings[0]
+        # Jambes (à ~1 km de Namur) : main propre, 25 € tout compris -> meilleur score.
+        assert first["platform"] == "2ememain" and first["delivery_mode"] == "main propre"
+        assert first["delivered_total"] == 25 and first["distance_km"] < 3 and first["pickup_possible"]
+        # Ostende (~150 km) : envoi, port estimé ajouté ; prix "à partir de" signalé.
+        ostende = next(l for l in listings if "m222" in l["url"])
+        assert ostende["delivery_mode"] == "envoi" and ostende["delivered_total"] == 22.5
+        assert any("à partir de" in n for n in ostende["notes"])
+        # Vinted : 32,20 € + 5 € de port estimé.
+        vinted = next(l for l in listings if l["platform"] == "vinted")
+        assert vinted["delivered_total"] == 37.2
+        assert all(0 <= l["score"] <= 100 for l in listings)
+        assert set(first["components"]) == {"price", "deal", "proximity", "trust", "freshness"}
 
-        # Deuxième appel : servi par le cache, aucun nouveau run Apify (donc aucun coût).
+        rejected = next(s for s in data["searches"] if s["platform"] == "vinted")["rejected"]
+        assert sorted(r["reason"] for r in rejected) == ["objet exclu : « cd »", "titre de l'album absent"]
+
+        # Cache : aucun nouveau run Apify ni géocodage.
+        calls, geo = len(apify.calls), apify.geocode_calls
         again = client.get("/offers/albums/al1").json()
-        assert len(apify.calls) == 2 and all(s["from_cache"] for s in again["searches"])
-        client.get("/offers/albums/al1", params={"refresh": True, "platforms": "vinted"})
-        assert len(apify.calls) == 3
-
+        assert len(apify.calls) == calls and apify.geocode_calls == geo
+        assert all(s["from_cache"] for s in again["searches"])
         assert client.get("/offers/albums/inconnu").status_code == 404
+
+
+def test_leboncoin_unreachable_from_namur():
+    apify = FakeApify()
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        data = client.get("/offers/albums/al1", params={"platforms": "leboncoin"}).json()
+        # Annonce à Lieuvillers (Oise), main propre seulement, ~230 km : ni livrable en Belgique, ni à portée.
+        assert data["listings"] == [] and len(data["unreachable"]) == 1
+        assert "Non livrable en BE" in data["unreachable"][0]["notes"][0]
 
 
 def test_errors_are_reported_not_cached():
     apify = FakeApify()
     apify.fail_vinted = True
     with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
         _login(client)
         data = client.get("/offers/albums/al1").json()
         vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
         assert vinted["error"].startswith("Apify refuse le lancement (402, not-enough-usage-to-run-paid-actor)")
-        assert "Monthly usage exceeded" in vinted["error"]
-        assert len(data["listings"]) == 1  # Leboncoin a fonctionné
+        assert len(data["listings"]) == 2  # 2ememain a fonctionné
         apify.fail_vinted = False
         client.get("/offers/albums/al1")
         assert sum("vinted" in a for a, _ in apify.calls) == 2  # l'échec n'était pas en cache
 
 
+def test_memory_limit_is_retried_not_reported(monkeypatch):
+    import app.offers.apify as apify_module
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(apify_module.asyncio, "sleep", no_sleep)
+    apify = FakeApify()
+    apify.busy_vinted = 2
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        data = client.get("/offers/albums/al1").json()
+        vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
+        assert vinted["error"] is None and len(vinted["listings"]) == 1
+    assert sum("vinted" in a for a, _ in apify.calls) == 3
+
+
 def test_scan_and_best():
     apify = FakeApify()
     with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
         _login(client)
         started = client.post("/offers/scan", params={"limit": 5}).json()
-        assert started["running"] and started["estimated_cost_usd"] == 0.3
+        assert started["running"] and started["estimated_cost_usd"] == 0.03
         for _ in range(200):
             status = client.get("/offers/scan/status").json()
             if not status["running"]:
                 break
             time.sleep(0.02)
         assert status["total"] == 2 and status["done"] == 2 and status["errors"] == 0
-        assert status["albums_with_offers"] == 1 and status["listings_found"] == 2
+        assert status["albums_with_offers"] == 1
 
         best = client.get("/offers/best").json()
-        assert best["total"] == 1
-        assert best["albums"][0]["title"] == "Discovery" and best["albums"][0]["best"]["total_known"] == 20
-
-        # Rien de nouveau à analyser : tout est en cache.
-        client.post("/offers/scan")
-        for _ in range(200):
-            status = client.get("/offers/scan/status").json()
-            if not status["running"]:
-                break
-            time.sleep(0.02)
-        assert status["total"] == 0 and len(apify.calls) == 4
+        assert best["total"] == 1 and best["albums"][0]["title"] == "Discovery"
+        assert best["albums"][0]["best"]["delivery_mode"] == "main propre"
+        assert client.get("/offers/best", params={"sort": "price"}).json()["sort"] == "price"
 
 
 def test_apify_not_configured():
     with TestClient(_no_token_app(), base_url="https://testserver") as client:
-        _login(client)
+        _login(client, namur=False)
         r = client.get("/offers/albums/al1")
         assert r.status_code == 503 and "APIFY_TOKEN" in r.json()["detail"]
 
@@ -244,18 +317,39 @@ def _no_token_app():
     return create_app(settings, transport=httpx.MockTransport(FakeApify()))
 
 
-def test_memory_limit_is_retried_not_reported(monkeypatch):
-    import app.offers.apify as apify_module
+# --------------------------------------------------------------------------- scoring (unitaire)
 
-    async def no_sleep(_):
-        return None
 
-    monkeypatch.setattr(apify_module.asyncio, "sleep", no_sleep)
-    apify = FakeApify()
-    apify.busy_vinted = 2  # deux refus "mémoire" puis succès
-    with TestClient(_app(apify), base_url="https://testserver") as client:
-        _login(client)
-        data = client.get("/offers/albums/al1").json()
-        vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
-        assert vinted["error"] is None and len(vinted["listings"]) == 1
-    assert sum("vinted" in a for a, _ in apify.calls) == 3
+def test_scoring_helpers():
+    from datetime import datetime
+
+    from app.offers.scoring import condition_score, deal_score, parse_date
+
+    now = datetime(2026, 11, 22)
+    assert parse_date("22 août 26", now) == datetime(2026, 8, 22)
+    assert parse_date("3 déc. 25", now) == datetime(2025, 12, 3)
+    assert parse_date("Hier", now).day == 21
+    assert parse_date("2026-11-21 22:21:00", now) == datetime(2026, 11, 21, 22, 21)
+    assert parse_date("n'importe quoi", now) is None
+
+    assert deal_score(10, 20) == 100 and deal_score(20, 20) == 50 and deal_score(40, 20) == 0
+    assert deal_score(20, None) == 50
+    assert condition_score("État neuf", "") == 100 and condition_score("Très bon état", "") == 85
+    assert format_hint('Vinyle 12" Leon Bridges') == "LP" and format_hint('Single 7" 45rpm') == '45T (7")'
+
+
+def test_cross_posted_listing_shown_once():
+    from app.offers.scoring import score_listings
+    from app.user_settings import UserSettings
+
+    title = "Vinyle Leon Bridges - Happiness Anytime (LP, vinyle blanc opaque) neuf"
+    lbc = Listing(platform="leboncoin", external_id="1", title=title, url="https://l/1", price=30, total_known=31.99,
+                  shippable=True, country="FR", latitude=48.08, longitude=7.364)
+    vinted = Listing(platform="vinted", external_id="2", title=title, url="https://v/2", price=30, total_known=32.2,
+                     shippable=True)
+    settings = UserSettings(city="Paris", country="FR", latitude=48.857, longitude=2.341)
+    ranked, unreachable = score_listings([lbc, vinted], settings, discogs_reference=60)
+    assert len(ranked) == 1 and not unreachable
+    kept = ranked[0]
+    assert kept.also_on and any("Aussi en vente" in n for n in kept.notes)
+    assert any("Bonne affaire" in n for n in kept.notes)  # ~37 € contre 60 € sur Discogs

@@ -9,14 +9,17 @@ from dataclasses import asdict, dataclass
 from rapidfuzz import fuzz
 
 from app.offers.apify import ApifyClient, ApifyError
+from app.geo import Geocoder
 from app.offers.models import AlbumListings, Listing, PlatformSearch, RejectedListing
+from app.offers.scoring import score_listings
+from app.user_settings import UserSettings
 from app.offers.platforms import PLATFORMS
 from app.spotify.normalize import LibraryAlbum, artist_key, fold, strip_nickname
 
 log = logging.getLogger("waxmatch.offers")
 
-# Coût moyen observé par recherche (20 résultats max), en dollars : sert à l'estimation affichée.
-COST_PER_SEARCH = {"vinted": 0.02, "leboncoin": 0.04}
+# Coût réel observé : ~0,001-0,002 $ par recherche (20 annonces max) ; on garde une marge.
+COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003}
 
 _EXCLUDED = re.compile(
     r"\b(cd|cds|compact disc|cassette|cassettes|k7|dvd|blu ray|poster|affiche|t shirt|tshirt|tee shirt|"
@@ -104,12 +107,19 @@ class OffersStore:
 # --------------------------------------------------------------------------- recherche
 
 
-async def search_platform(apify: ApifyClient, platform: str, album: LibraryAlbum, max_items: int) -> PlatformSearch:
+async def search_platform(
+    apify: ApifyClient,
+    platform: str,
+    album: LibraryAlbum,
+    max_items: int,
+    country: str = "BE",
+    geocoder: Geocoder | None = None,
+) -> PlatformSearch:
     config = PLATFORMS[platform]
     query = build_query(album)
     search = PlatformSearch(platform=platform, query=query)
     try:
-        items = await apify.run_actor(config.actor_id, config.build_input(query, max_items))
+        items = await apify.run_actor(config.actor_id, config.build_input(query, max_items, country))
     except ApifyError as exc:
         search.error = str(exc)
         return search
@@ -128,37 +138,57 @@ async def search_platform(apify: ApifyClient, platform: str, album: LibraryAlbum
             search.rejected.append(
                 RejectedListing(platform=platform, title=listing.title, url=listing.url, reason=reason)
             )
+    # Villes sans coordonnées (2ememain) : géocodage, pour calculer la distance de main propre.
+    if geocoder is not None:
+        for listing in search.listings:
+            if listing.city and listing.latitude is None:
+                found = await geocoder.geocode(listing.city, listing.country)
+                if found:
+                    listing.latitude, listing.longitude = found[0], found[1]
     return search
+
+
+def build_album_listings(
+    album: LibraryAlbum,
+    searches: list[PlatformSearch],
+    settings: UserSettings,
+    discogs_reference: float | None,
+) -> AlbumListings:
+    raw = [lst for s in searches for lst in s.listings]
+    ranked, unreachable = score_listings(raw, settings, discogs_reference)
+    return AlbumListings(
+        spotify_id=album.spotify_id,
+        artist=album.primary_artist,
+        title=album.title_clean,
+        discogs_reference=discogs_reference,
+        listings=ranked,
+        unreachable=unreachable,
+        searches=searches,
+    )
 
 
 async def album_listings(
     apify: ApifyClient,
     store: OffersStore,
     album: LibraryAlbum,
-    platforms: list[str],
+    settings: UserSettings,
     max_items: int,
     cache_hours: float,
     refresh: bool = False,
+    geocoder: Geocoder | None = None,
+    discogs_reference: float | None = None,
 ) -> AlbumListings:
     async def one(platform: str) -> PlatformSearch:
         cached = None if refresh else store.get(platform, album.match_key, cache_hours * 3600)
         if cached:
             return cached.model_copy(update={"from_cache": True})
-        result = await search_platform(apify, platform, album, max_items)
+        result = await search_platform(apify, platform, album, max_items, settings.country, geocoder)
         if result.error is None:  # on ne met pas les échecs en cache
             await store.put(album.match_key, result)
         return result
 
-    searches = await asyncio.gather(*(one(p) for p in platforms))
-    listings: list[Listing] = [lst for s in searches for lst in s.listings]
-    listings.sort(key=lambda lst: (lst.total_known is None, lst.total_known or 0))
-    return AlbumListings(
-        spotify_id=album.spotify_id,
-        artist=album.primary_artist,
-        title=album.title_clean,
-        listings=listings,
-        searches=list(searches),
-    )
+    searches = await asyncio.gather(*(one(p) for p in settings.platforms))
+    return build_album_listings(album, list(searches), settings, discogs_reference)
 
 
 # --------------------------------------------------------------------------- analyse en lot
@@ -189,13 +219,14 @@ async def run_scan(
     store: OffersStore,
     job: ScanJob,
     albums: list[LibraryAlbum],
-    platforms: list[str],
+    settings: UserSettings,
     max_items: int,
     cache_hours: float,
     concurrency: int = 1,
+    geocoder: Geocoder | None = None,
 ) -> None:
     job.running, job.phase, job.started_at, job.total = True, "recherche des annonces", time.time(), len(albums)
-    job.estimated_cost_usd = round(len(albums) * sum(COST_PER_SEARCH[p] for p in platforms), 2)
+    job.estimated_cost_usd = round(len(albums) * sum(COST_PER_SEARCH[p] for p in settings.platforms), 2)
     # 1 album à la fois par défaut (= 2 runs Apify, un par plateforme) : un compte gratuit limite
     # la mémoire totale des runs simultanés.
     sem = asyncio.Semaphore(concurrency)
@@ -203,7 +234,9 @@ async def run_scan(
     async def one(album: LibraryAlbum) -> None:
         async with sem:
             try:
-                result = await album_listings(apify, store, album, platforms, max_items, cache_hours)
+                result = await album_listings(
+                    apify, store, album, settings, max_items, cache_hours, geocoder=geocoder
+                )
                 job.listings_found += len(result.listings)
                 job.albums_with_offers += bool(result.listings)
                 failed = [s.error for s in result.searches if s.error]

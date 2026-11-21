@@ -151,20 +151,26 @@ def test_rls_enabled_on_all_tables(tmp_path):
     assert rows and all(r["relrowsecurity"] for r in rows), rows
 
 
-def test_listings_cached_in_database(tmp_path):
+def test_listings_settings_and_geocodes_in_database(tmp_path):
     from tests.test_offers import FakeApify
 
     apify = FakeApify()
     settings = _settings(tmp_path, apify_token="AP")
     with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
+        c.app.state.geocoder.min_interval = 0
         _login(c)
-        assert len(c.get("/offers/albums/al1").json()["listings"]) == 2
+        assert c.put("/settings", json={"city": "Namur", "country": "BE"}).status_code == 200
+        data = c.get("/offers/albums/al1").json()
+        assert len(data["listings"]) == 3 and data["listings"][0]["delivery_mode"] == "main propre"
     rows = _run(_query("select platform, kept_count from listing_searches order by platform"))
-    assert [(r["platform"], r["kept_count"]) for r in rows] == [("leboncoin", 1), ("vinted", 1)]
+    assert [(r["platform"], r["kept_count"]) for r in rows] == [("2ememain", 2), ("vinted", 1)]
+    geocoded = apify.geocode_calls
+    assert geocoded == 3  # Namur, Jambes, Ostende
 
-    # Après redémarrage : résultats relus depuis la base, aucun nouveau run Apify.
+    # Après redémarrage : réglages, annonces et villes relus depuis la base ; aucun appel externe.
     with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
         _login(c)
+        assert c.get("/settings").json()["city"] == "Namur"
         data = c.get("/offers/albums/al1").json()
-        assert all(s["from_cache"] for s in data["searches"]) and len(data["listings"]) == 2
-    assert len(apify.calls) == 2
+        assert all(s["from_cache"] for s in data["searches"]) and data["listings"][0]["delivery_mode"] == "main propre"
+    assert len(apify.calls) == 2 and apify.geocode_calls == geocoded

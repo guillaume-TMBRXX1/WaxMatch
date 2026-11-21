@@ -21,10 +21,11 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 | POST | `/discogs/enrich` | Lance en arrière-plan la recherche Discogs (genres, styles, fiche) des albums non traités |
 | GET | `/discogs/enrich/status` | Avancée de la recherche Discogs |
 | GET | `/discogs/albums/{spotify_id}` | Éditions vinyles d'un album et prix Discogs les plus bas (hors port) |
-| GET | `/offers/albums/{spotify_id}` | Annonces Vinted et Leboncoin d'un album via Apify (filtrées, triées par prix ; cache 24 h). `platforms=`, `refresh=` |
+| GET / PUT | `/settings` | Réglages : ville (géocodée), pays, rayon de main propre, priorité du score, plateformes |
+| GET | `/offers/albums/{spotify_id}` | Annonces Vinted, 2ememain, Leboncoin d'un album via Apify, filtrées et **classées par score** (prix livré, bonne affaire vs Discogs, proximité, confiance, fraîcheur). `platforms=`, `refresh=` |
 | POST | `/offers/scan` | Analyse en arrière-plan les albums récents sans résultat en cache. `limit=` (coût estimé renvoyé) |
 | GET | `/offers/scan/status` | Avancée de l'analyse en lot |
-| GET | `/offers/best` | Meilleure annonce connue pour chaque album, la moins chère d'abord |
+| GET | `/offers/best` | Meilleure annonce connue pour chaque album (`sort=score\|price`), sans coût |
 | GET | `/health` | Contrôle de santé : état de la base, nombre d'utilisateurs et de correspondances Discogs |
 
 Base de données : PostgreSQL/Supabase via `DATABASE_URL` (migrations appliquées automatiquement au démarrage, depuis `backend/app/migrations/`). Tests sur une vraie base : `TEST_DATABASE_URL=postgresql://… pytest`.

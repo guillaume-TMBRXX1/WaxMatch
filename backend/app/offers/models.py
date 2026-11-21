@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Platform = Literal["vinted", "leboncoin"]
+Platform = Literal["vinted", "leboncoin", "2ememain"]
 
 
 class Listing(BaseModel):
@@ -15,6 +15,7 @@ class Listing(BaseModel):
     url: str
     price: float | None = None
     currency: str = "EUR"
+    price_type: str | None = None  # 2ememain : FIXED, MIN_BID (offre à partir de)…
     buyer_fee: float | None = None  # protection acheteur (Vinted, Leboncoin)
     total_known: float | None = None  # prix + protection acheteur, HORS frais de port
     condition: str | None = None
@@ -24,6 +25,7 @@ class Listing(BaseModel):
     city: str | None = None
     zipcode: str | None = None
     department: str | None = None
+    country: str | None = None  # code pays du vendeur quand il est connu (FR, BE…)
     latitude: float | None = None
     longitude: float | None = None
     shippable: bool | None = None
@@ -53,10 +55,24 @@ class PlatformSearch(BaseModel):
     from_cache: bool = False
 
 
+class ScoredListing(Listing):
+    score: float = 0  # sur 100
+    delivered_total: float | None = None  # prix total pour toi : port estimé inclus, ou main propre
+    delivery_mode: Literal["main propre", "envoi"] | None = None
+    shipping_estimate: float | None = None
+    distance_km: float | None = None
+    pickup_possible: bool = False
+    components: dict[str, float] = {}  # détail du score par critère
+    notes: list[str] = []
+    also_on: list[str] = []  # même annonce repérée sur une autre plateforme (liens)
+
+
 class AlbumListings(BaseModel):
     spotify_id: str
     artist: str
     title: str
-    listings: list[Listing]  # toutes plateformes, triées par prix connu croissant
+    discogs_reference: float | None = None  # prix vinyle le plus bas sur Discogs (hors port)
+    listings: list[ScoredListing]  # du meilleur score au moins bon
+    unreachable: list[ScoredListing] = []  # ni livrable chez toi, ni dans ton rayon de main propre
     searches: list[PlatformSearch]
-    note: str = "Prix hors frais de port (estimation du port et score : étape suivante)."
+    note: str = "Frais de port estimés (barème indicatif) ; à confirmer sur l'annonce."

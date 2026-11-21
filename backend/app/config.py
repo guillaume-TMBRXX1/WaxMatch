@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     offers_cache_hours: float = 24
     apify_concurrency: int = 1  # albums analysés en même temps lors d'un scan (2 runs Apify par album)
 
+    # Géocodage des villes (Nominatim/OpenStreetMap exige un User-Agent identifiant l'application)
+    geocoder_user_agent: str = "WaxMatch/0.1 (projet personnel)"
+
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None
     # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.
