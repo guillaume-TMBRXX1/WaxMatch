@@ -148,6 +148,12 @@ def score_listings(
         c.score = round(sum(components[k] * weights[k] for k in weights) / 100, 1)
         if discogs_reference and c.delivered_total <= discogs_reference * 0.7:
             c.notes.append(f"Bonne affaire : {round(100 * (1 - c.delivered_total / discogs_reference))} % sous Discogs")
+        elif discogs_reference and c.delivered_total >= discogs_reference * 1.2:
+            ref = f"{discogs_reference:.2f}".replace(".", ",")
+            c.notes.append(
+                f"Plus cher que sur Discogs (+{round(100 * (c.delivered_total / discogs_reference - 1))} % ; "
+                f"{ref} € hors port)"
+            )
 
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates, unreachable
