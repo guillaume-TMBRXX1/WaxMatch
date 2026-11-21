@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import Settings, get_settings
-from app.routers import auth, library
+from app.discogs.client import RateLimiter
+from app.discogs.service import DiscogsStore, EnrichJob
+from app.routers import auth, discogs, library
 from app.store import InMemoryTokenStore, TokenStore
 
 
@@ -21,12 +23,18 @@ def create_app(
     async def lifespan(app: FastAPI):
         app.state.http = httpx.AsyncClient(timeout=20, transport=transport)
         yield
+        if app.state.discogs_task and not app.state.discogs_task.done():
+            app.state.discogs_task.cancel()
         await app.state.http.aclose()
 
     app = FastAPI(title="WaxMatch API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store or InMemoryTokenStore()
     app.state.library_cache = {}
+    app.state.discogs_store = DiscogsStore(settings.discogs_cache_path)
+    app.state.discogs_limiter = RateLimiter(settings.discogs_min_interval)
+    app.state.discogs_job = EnrichJob()
+    app.state.discogs_task = None
 
     app.add_middleware(
         SessionMiddleware,
@@ -47,6 +55,7 @@ def create_app(
 
     app.include_router(auth.router)
     app.include_router(library.router)
+    app.include_router(discogs.router)
 
     @app.get("/health", tags=["meta"])
     async def health():
