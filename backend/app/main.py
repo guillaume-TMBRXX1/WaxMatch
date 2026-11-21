@@ -10,7 +10,8 @@ from app.crypto import TokenCipher
 from app.db import create_pool
 from app.discogs.client import RateLimiter
 from app.discogs.service import DiscogsStore, EnrichJob
-from app.routers import auth, discogs, library
+from app.offers.service import OffersStore, ScanJob
+from app.routers import auth, discogs, library, offers
 from app.repos import PostgresLibraryRepo
 from app.store import InMemoryTokenStore, PostgresTokenStore, TokenStore
 
@@ -34,9 +35,12 @@ def create_app(
         app.state.db_pool = pool
         app.state.discogs_store = DiscogsStore(settings.discogs_cache_path, pool)
         await app.state.discogs_store.load()
+        app.state.offers_store = OffersStore(pool)
+        await app.state.offers_store.load()
         yield
-        if app.state.discogs_task and not app.state.discogs_task.done():
-            app.state.discogs_task.cancel()
+        for task in (app.state.discogs_task, app.state.offers_task):
+            if task and not task.done():
+                task.cancel()
         await app.state.http.aclose()
         if pool is not None:
             await pool.close()
@@ -50,6 +54,8 @@ def create_app(
     app.state.discogs_limiter = RateLimiter(settings.discogs_min_interval)
     app.state.discogs_job = EnrichJob()
     app.state.discogs_task = None
+    app.state.offers_job = ScanJob()
+    app.state.offers_task = None
 
     app.add_middleware(
         SessionMiddleware,
@@ -71,6 +77,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(library.router)
     app.include_router(discogs.router)
+    app.include_router(offers.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

@@ -3,6 +3,7 @@ from fastapi import Depends, HTTPException, Request
 
 from app.config import Settings
 from app.discogs.client import DiscogsClient
+from app.offers.apify import ApifyClient
 from app.spotify.client import SpotifyClient
 from app.store import TokenStore
 
@@ -33,6 +34,15 @@ def get_discogs(
         request.app.state.discogs_limiter,
         settings.discogs_currency,
     )
+
+
+def get_apify(
+    settings: Settings = Depends(get_settings_dep),
+    http: httpx.AsyncClient = Depends(get_http),
+) -> ApifyClient:
+    if not settings.apify_token:
+        raise HTTPException(status_code=503, detail="Apify non configuré : ajoute le secret APIFY_TOKEN")
+    return ApifyClient(http, settings.apify_token)
 
 
 async def get_spotify(
