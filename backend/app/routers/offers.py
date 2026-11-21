@@ -77,7 +77,10 @@ async def start_scan(
             for a in sorted(albums, key=lambda a: a.added_at.timestamp() if a.added_at else 0, reverse=True)
             if a.album_type != "single" and any(store.get(p, a.match_key, max_age) is None for p in chosen)
         ][:limit]
-        await run_scan(apify, store, job, todo, chosen, settings.apify_max_items, settings.offers_cache_hours)
+        await run_scan(
+            apify, store, job, todo, chosen, settings.apify_max_items, settings.offers_cache_hours,
+            settings.apify_concurrency,
+        )
 
     state.offers_task = asyncio.create_task(prepare_then_scan())
     status = job.status()

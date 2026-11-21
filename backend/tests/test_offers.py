@@ -107,6 +107,7 @@ class FakeApify:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
         self.fail_vinted = False
+        self.busy_vinted = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.url.host != "api.apify.com":
@@ -117,7 +118,14 @@ class FakeApify:
         self.calls.append((actor, body))
         if "vinted" in actor:
             if self.fail_vinted:
-                return httpx.Response(402, json={"error": "payment required"})
+                return httpx.Response(
+                    402, json={"error": {"type": "not-enough-usage-to-run-paid-actor", "message": "Monthly usage exceeded"}}
+                )
+            if self.busy_vinted > 0:
+                self.busy_vinted -= 1
+                return httpx.Response(
+                    402, json={"error": {"type": "actor-memory-limit-exceeded", "message": "8192MB limit"}}
+                )
             items = VINTED_RESULTS if "Daft Punk" in body["searchQueries"][0] else []
             return httpx.Response(201, json=items)
         items = LBC_RESULTS if "Daft Punk" in body["searchQueries"][0] else []
@@ -181,7 +189,8 @@ def test_errors_are_reported_not_cached():
         _login(client)
         data = client.get("/offers/albums/al1").json()
         vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
-        assert vinted["error"] == "Crédit Apify épuisé pour ce mois"
+        assert vinted["error"].startswith("Apify refuse le lancement (402, not-enough-usage-to-run-paid-actor)")
+        assert "Monthly usage exceeded" in vinted["error"]
         assert len(data["listings"]) == 1  # Leboncoin a fonctionné
         apify.fail_vinted = False
         client.get("/offers/albums/al1")
@@ -233,3 +242,20 @@ def _no_token_app():
         cookie_secure=False,
     )
     return create_app(settings, transport=httpx.MockTransport(FakeApify()))
+
+
+def test_memory_limit_is_retried_not_reported(monkeypatch):
+    import app.offers.apify as apify_module
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(apify_module.asyncio, "sleep", no_sleep)
+    apify = FakeApify()
+    apify.busy_vinted = 2  # deux refus "mémoire" puis succès
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _login(client)
+        data = client.get("/offers/albums/al1").json()
+        vinted = next(s for s in data["searches"] if s["platform"] == "vinted")
+        assert vinted["error"] is None and len(vinted["listings"]) == 1
+    assert sum("vinted" in a for a, _ in apify.calls) == 3
