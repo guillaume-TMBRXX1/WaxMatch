@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # et coûteux (une requête par artiste). Discogs fournit désormais genres et styles.
     spotify_artist_genres: bool = False
 
+    # Apify (Vinted, Leboncoin) : console.apify.com -> Settings -> API & Integrations
+    apify_token: str | None = None
+    apify_max_items: int = 20  # annonces max par recherche et par plateforme (le coût en dépend)
+    offers_cache_hours: float = 24
+
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None
     # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.

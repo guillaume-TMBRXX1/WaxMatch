@@ -149,3 +149,22 @@ def test_rls_enabled_on_all_tables(tmp_path):
         pass
     rows = _run(_query("select relname, relrowsecurity from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r'"))
     assert rows and all(r["relrowsecurity"] for r in rows), rows
+
+
+def test_listings_cached_in_database(tmp_path):
+    from tests.test_offers import FakeApify
+
+    apify = FakeApify()
+    settings = _settings(tmp_path, apify_token="AP")
+    with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
+        _login(c)
+        assert len(c.get("/offers/albums/al1").json()["listings"]) == 2
+    rows = _run(_query("select platform, kept_count from listing_searches order by platform"))
+    assert [(r["platform"], r["kept_count"]) for r in rows] == [("leboncoin", 1), ("vinted", 1)]
+
+    # Après redémarrage : résultats relus depuis la base, aucun nouveau run Apify.
+    with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
+        _login(c)
+        data = c.get("/offers/albums/al1").json()
+        assert all(s["from_cache"] for s in data["searches"]) and len(data["listings"]) == 2
+    assert len(apify.calls) == 2
