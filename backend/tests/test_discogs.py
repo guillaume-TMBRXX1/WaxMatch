@@ -62,7 +62,7 @@ def fake_world(request: httpx.Request) -> httpx.Response:
     assert request.headers["User-Agent"]
     path, params = request.url.path, request.url.params
     if path == "/database/search":
-        if params["type"] == "master" and params["artist"] == "Daft Punk":
+        if params.get("type") == "master" and params.get("artist") == "Daft Punk":
             return httpx.Response(200, json=SEARCH_MASTER)
         return httpx.Response(200, json={"results": []})  # Miles Davis introuvable
     if path == "/masters/100/versions":
@@ -163,3 +163,64 @@ def test_discogs_not_configured(tmp_path):
         _login(client)
         r = client.post("/discogs/enrich")
         assert r.status_code == 503 and "DISCOGS_TOKEN" in r.json()["detail"]
+
+
+# --------------------------------------------------------------------------- cas réels signalés
+
+
+def test_clean_title_with_and_nickname():
+    from app.spotify.normalize import clean_title, strip_nickname
+
+    assert clean_title("Talking Timbuktu (with Ry Cooder)") == "Talking Timbuktu"
+    assert strip_nickname('Bobby "Blue" Bland') == "Bobby Bland"
+    assert strip_nickname("Guns N' Roses") == "Guns N' Roses"
+
+
+def test_real_world_matches():
+    cases = [
+        (("Ali Farka Touré", "Talking Timbuktu (with Ry Cooder)"), "Ali Farka Touré With Ry Cooder - Talking Timbuktu"),
+        (('Bobby "Blue" Bland', "Two Steps From The Blues"), "Bobby Bland - Two Steps From The Blues"),
+        (("Bad Bunny", "DeBÍ TiRAR MáS FOToS"), "Bad Bunny - Debí Tirar Más Fotos"),
+        (
+            ("Charles Bradley", "The Daptone Super Soul Revue Live at the Apollo"),
+            "Various - The Daptone Super Soul Revue Live At The Apollo",
+        ),
+    ]
+    for (artist, title), discogs_title in cases:
+        hit = best_result(_album(artist, title), [{"title": discogs_title, "id": 1}], threshold=80)
+        assert hit, f"{artist} - {title} devrait correspondre à {discogs_title}"
+
+
+def test_various_needs_long_exact_title():
+    assert best_result(_album("Queen", "Greatest Hits"), [{"title": "Various - Greatest Hits", "id": 1}], 80) is None
+
+
+def test_search_plans_fallbacks():
+    from app.discogs.service import search_plans
+
+    plans = search_plans(_album('Bobby "Blue" Bland', "Two Steps From The Blues"))
+    assert plans[0]["artist"] == "Bobby Bland"
+    assert plans[2]["q"] == "bobby bland two steps from the blues"
+    assert plans[3]["q"] == "two steps from the blues"  # titre seul (>= 3 mots)
+    assert len(search_plans(_album("Daft Punk", "Discovery"))) == 3  # titre court : pas de recherche titre seul
+
+
+def test_collaborator_as_second_artist():
+    album = normalize_saved_item(
+        {"added_at": None, "album": {"id": "x", "name": "Talking Timbuktu",
+                                     "artists": [{"id": "a", "name": "Ry Cooder"}, {"id": "b", "name": "Ali Farka Touré"}]}},
+        {},
+    )
+    assert best_result(album, [{"title": "Ali Farka Touré - Talking Timbuktu", "id": 1}], 80)
+
+
+def test_retry_not_found(tmp_path):
+    from app.discogs.models import DiscogsMatch
+    from app.discogs.service import DiscogsStore
+
+    store = DiscogsStore(None)
+    store.put("a|b", DiscogsMatch(found=False))
+    store.put("c|d", DiscogsMatch(found=True, id=1))
+    assert not store.needs_lookup("a|b")  # introuvable récent : pas relancé par défaut
+    assert store.needs_lookup("a|b", retry_not_found=True)
+    assert not store.needs_lookup("c|d", retry_not_found=True)  # trouvé : jamais relancé
