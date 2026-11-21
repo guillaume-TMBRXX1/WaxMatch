@@ -3,6 +3,9 @@
 import re
 from datetime import datetime, timedelta
 
+from statistics import median
+
+from app.discogs.models import AlbumOffers
 from app.geo import haversine_km
 from app.offers.models import Listing, ScoredListing
 from app.spotify.normalize import fold
@@ -13,6 +16,22 @@ from app.user_settings import UserSettings
 SHIPPING_ESTIMATE = {"vinted": 5.0, "2ememain": 7.5, "leboncoin": 5.5}
 # Pays de livraison possibles par plateforme (Leboncoin ne livre qu'en France).
 SHIPS_TO = {"vinted": None, "2ememain": {"BE"}, "leboncoin": {"FR"}}  # None = pas de restriction connue
+
+# Port typique d'un vinyle acheté sur Discogs et livré en Europe (vendeur européen), en euros.
+DISCOGS_SHIPPING_ESTIMATE = 8.0
+
+
+def discogs_reference_price(offers: AlbumOffers | None) -> float | None:
+    """Prix Discogs « typique livré » : médiane des prix les plus bas des éditions vinyles en vente,
+    plus un port estimé. Le minimum seul est trompeur : il désigne souvent un exemplaire abîmé
+    (0,68 € pour Super Session !) et il exclut le port, alors que nos annonces l'incluent."""
+    if offers is None:
+        return None
+    prices = [o.lowest_price for o in offers.offers if o.lowest_price and o.num_for_sale > 0]
+    if not prices:
+        return None
+    return round(median(prices) + DISCOGS_SHIPPING_ESTIMATE, 2)
+
 
 _CONDITION = [
     (re.compile(r"neuf|blister|scell"), 100),
@@ -153,7 +172,7 @@ def score_listings(
             ref = f"{discogs_reference:.2f}".replace(".", ",")
             c.notes.append(
                 f"Plus cher que sur Discogs (+{round(100 * (c.delivered_total / discogs_reference - 1))} % ; "
-                f"{ref} € hors port)"
+                f"Discogs ~{ref} € livré)"
             )
 
     candidates.sort(key=lambda c: c.score, reverse=True)

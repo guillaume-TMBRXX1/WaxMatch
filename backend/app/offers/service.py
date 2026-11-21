@@ -185,6 +185,19 @@ def build_album_listings(
     settings: UserSettings,
     discogs_reference: float | None,
 ) -> AlbumListings:
+    # Le filtre est réappliqué aux résultats en cache : toute amélioration du filtre vaut aussi
+    # pour les recherches déjà faites (et payées), sans relancer Apify.
+    cleaned: list[PlatformSearch] = []
+    for search in searches:
+        kept, rejected = [], list(search.rejected)
+        for lst in search.listings:
+            ok, reason, _ = judge(album, lst)
+            if ok:
+                kept.append(lst)
+            else:
+                rejected.append(RejectedListing(platform=lst.platform, title=lst.title, url=lst.url, reason=reason))
+        cleaned.append(search.model_copy(update={"listings": kept, "rejected": rejected}))
+    searches = cleaned
     raw = [lst for s in searches for lst in s.listings]
     ranked, unreachable = score_listings(raw, settings, discogs_reference)
     return AlbumListings(
