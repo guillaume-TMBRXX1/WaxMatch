@@ -13,7 +13,7 @@ from rapidfuzz import fuzz
 
 from app.discogs.client import DiscogsClient, DiscogsError
 from app.discogs.models import AlbumOffers, DiscogsMatch, VinylOffer
-from app.spotify.normalize import LibraryAlbum, artist_key, clean_title, fold
+from app.spotify.normalize import LibraryAlbum, artist_key, clean_title, fold, strip_nickname
 
 log = logging.getLogger("waxmatch.discogs")
 
@@ -34,13 +34,32 @@ def split_discogs_title(title: str) -> tuple[str, str]:
     return (artist, album) if sep else ("", title)
 
 
+VARIOUS = {"various", "various artists", "divers"}
+
+
+def _artist_score(album: LibraryAlbum, discogs_artist: str) -> float:
+    """Meilleur score parmi les artistes de l'album (gère duos, collaborations et surnoms)."""
+    r_key = artist_key(_ANV.sub("", _DISAMBIGUATION.sub("", discogs_artist)))
+    best = 0.0
+    for name in dict.fromkeys([*album.artists, album.primary_artist]):
+        for variant in {name, strip_nickname(name)}:
+            a_key = artist_key(variant)
+            if a_key and r_key:
+                best = max(best, fuzz.token_sort_ratio(a_key, r_key), fuzz.partial_ratio(a_key, r_key))
+    return best
+
+
 def score_result(album: LibraryAlbum, result: dict) -> tuple[float, float, float]:
     """(score global, score artiste, score titre), chacun sur 100."""
     r_artist, r_title = split_discogs_title(result.get("title", ""))
-    r_artist = _ANV.sub("", _DISAMBIGUATION.sub("", r_artist))
-    a_key, r_key = artist_key(album.primary_artist), artist_key(r_artist)
-    artist_score = max(fuzz.token_sort_ratio(a_key, r_key), fuzz.partial_ratio(a_key, r_key))
     title_score = fuzz.token_sort_ratio(fold(album.title_clean), fold(clean_title(r_title)))
+    if fold(r_artist) in VARIOUS:
+        # Compilation ou revue collective (ex. "Daptone Super Soul Revue") : on se fie au titre,
+        # à condition qu'il soit long et quasi identique, pour éviter les "Greatest Hits".
+        long_title = len(fold(album.title_clean).split()) >= 3
+        artist_score = 100.0 if long_title and title_score >= 95 else 0.0
+    else:
+        artist_score = _artist_score(album, r_artist)
     return (artist_score + title_score) / 2, artist_score, title_score
 
 
@@ -51,6 +70,21 @@ def best_result(album: LibraryAlbum, results: list[dict], threshold: float) -> t
         if total >= threshold and min(a, t) >= threshold - 15 and (best is None or total > best[1]):
             best = (res, total)
     return best
+
+
+def search_plans(album: LibraryAlbum) -> list[dict]:
+    """Recherches successives, de la plus précise à la plus large ; on s'arrête au premier résultat fiable."""
+    artist = strip_nickname(album.primary_artist)
+    title = album.title_clean
+    plans: list[dict] = [
+        {"type": "master", "artist": artist, "release_title": title},
+        {"type": "release", "format": "Vinyl", "artist": artist, "release_title": title},
+        # Recherche libre sans accents ni ponctuation ("DeBÍ TiRAR MáS FOToS" -> "debi tirar mas fotos")
+        {"type": "master", "q": f"{fold(artist)} {fold(title)}"},
+    ]
+    if len(fold(title).split()) >= 3:  # titre seul : compilations, collaborations mal attribuées
+        plans.append({"type": "master", "q": fold(title)})
+    return plans
 
 
 def match_from_result(result: dict, score: float) -> DiscogsMatch:
@@ -78,10 +112,8 @@ def match_from_result(result: dict, score: float) -> DiscogsMatch:
 
 
 async def find_match(client: DiscogsClient, album: LibraryAlbum, threshold: float) -> DiscogsMatch:
-    """1) fiche "master" (regroupe toutes les éditions) ; 2) à défaut, une édition vinyle."""
-    base = {"artist": album.primary_artist, "release_title": album.title_clean}
-    for params in ({"type": "master"}, {"type": "release", "format": "Vinyl"}):
-        results = await client.search(**base, **params)
+    for params in search_plans(album):
+        results = await client.search(**params)
         hit = best_result(album, results, threshold)
         if hit:
             return match_from_result(*hit)
@@ -109,9 +141,11 @@ class DiscogsStore:
     def get(self, key: str) -> DiscogsMatch | None:
         return self.matches.get(key)
 
-    def needs_lookup(self, key: str) -> bool:
+    def needs_lookup(self, key: str, retry_not_found: bool = False) -> bool:
         m = self.matches.get(key)
-        return m is None or (not m.found and time.time() - m.matched_at > NOT_FOUND_RETRY_SECONDS)
+        if m is None:
+            return True
+        return not m.found and (retry_not_found or time.time() - m.matched_at > NOT_FOUND_RETRY_SECONDS)
 
     def put(self, key: str, match: DiscogsMatch) -> None:
         self.matches[key] = match
@@ -163,9 +197,14 @@ class EnrichJob:
 
 
 async def run_enrichment(
-    client: DiscogsClient, store: DiscogsStore, job: EnrichJob, albums: list[LibraryAlbum], threshold: float
+    client: DiscogsClient,
+    store: DiscogsStore,
+    job: EnrichJob,
+    albums: list[LibraryAlbum],
+    threshold: float,
+    retry_not_found: bool = False,
 ) -> None:
-    todo = [a for a in albums if store.needs_lookup(a.match_key)]
+    todo = [a for a in albums if store.needs_lookup(a.match_key, retry_not_found)]
     job.__init__()  # remise à zéro
     job.running, job.started_at, job.phase = True, time.time(), "recherche Discogs"
 

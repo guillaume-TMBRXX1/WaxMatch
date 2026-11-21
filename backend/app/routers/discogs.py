@@ -16,10 +16,14 @@ router = APIRouter(prefix="/discogs", tags=["discogs"])
 @router.post("/enrich")
 async def start_enrichment(
     request: Request,
+    retry_not_found: bool = False,
     spotify: SpotifyClient = Depends(get_spotify),
     discogs: DiscogsClient = Depends(get_discogs),
 ):
-    """Lance (en arrière-plan) la recherche Discogs de tous les albums pas encore traités."""
+    """Lance (en arrière-plan) la recherche Discogs des albums pas encore traités.
+
+    `retry_not_found=true` relance aussi les albums introuvables (après une amélioration de la recherche).
+    """
     state = request.app.state
     job = state.discogs_job
     if not job.running:
@@ -34,7 +38,9 @@ async def start_enrichment(
             except Exception as exc:  # noqa: BLE001 - l'erreur est exposée dans le statut
                 job.running, job.phase, job.last_error = False, "erreur", str(exc)[:200]
                 return
-            await run_enrichment(discogs, state.discogs_store, job, albums, state.settings.discogs_match_threshold)
+            await run_enrichment(
+                discogs, state.discogs_store, job, albums, state.settings.discogs_match_threshold, retry_not_found
+            )
 
         state.discogs_task = asyncio.create_task(load_then_enrich())
     return job.status()

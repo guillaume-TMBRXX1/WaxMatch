@@ -24,6 +24,8 @@ _BRACKETED_EDITION = re.compile(
 )
 _DASH_EDITION = re.compile(rf"\s+[-–—]\s+[^-–—]*\b(?:{_EDITION_WORDS})\b.*$", re.IGNORECASE)
 _FEAT = re.compile(r"\s*[\(\[]?\b(?:feat\.?|ft\.?|featuring)\b.*$", re.IGNORECASE)
+_WITH = re.compile(r"\s*[\(\[]\s*(?:with|avec)\s[^\)\]]*[\)\]]", re.IGNORECASE)  # "(with Ry Cooder)"
+_NICKNAME = re.compile(r"\s*[\"“”][^\"“”]+[\"“”]")  # Bobby "Blue" Bland -> Bobby Bland
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
@@ -31,8 +33,14 @@ def clean_title(title: str) -> str:
     """Retire les mentions d'édition/remaster et les "feat." en gardant la casse d'origine."""
     out = _BRACKETED_EDITION.sub("", title)
     out = _DASH_EDITION.sub("", out)
+    out = _WITH.sub("", out)
     out = _FEAT.sub("", out)
     return re.sub(r"\s{2,}", " ", out).strip() or title.strip()
+
+
+def strip_nickname(name: str) -> str:
+    """Retire un surnom entre guillemets : 'Bobby "Blue" Bland' -> 'Bobby Bland'."""
+    return re.sub(r"\s{2,}", " ", _NICKNAME.sub("", name)).strip() or name
 
 
 def fold(text: str) -> str:
