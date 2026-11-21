@@ -57,8 +57,14 @@ def judge(album: LibraryAlbum, listing: Listing, threshold: float = 85) -> tuple
     return True, "ok", round((artist_score + title_score) / 2, 1)
 
 
-def build_query(album: LibraryAlbum) -> str:
-    return f"{strip_nickname(album.primary_artist)} {album.title_clean} vinyle"
+# Mot ajouté à la recherche. Sur 2ememain (annonces en français ET en néerlandais : « vinyl », « LP »,
+# « plaat »), « vinyle » éliminait des annonces pertinentes : on cherche artiste + titre seuls,
+# le filtre écarte ensuite CD, K7, etc.
+QUERY_SUFFIX = {"vinted": " vinyle", "leboncoin": " vinyle", "2ememain": ""}
+
+
+def build_query(album: LibraryAlbum, platform: str = "vinted") -> str:
+    return f"{strip_nickname(album.primary_artist)} {album.title_clean}{QUERY_SUFFIX.get(platform, '')}"
 
 
 # --------------------------------------------------------------------------- cache
@@ -116,7 +122,7 @@ async def search_platform(
     geocoder: Geocoder | None = None,
 ) -> PlatformSearch:
     config = PLATFORMS[platform]
-    query = build_query(album)
+    query = build_query(album, platform)
     search = PlatformSearch(platform=platform, query=query)
     try:
         items = await apify.run_actor(config.actor_id, config.build_input(query, max_items, country))

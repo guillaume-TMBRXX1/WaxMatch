@@ -85,9 +85,9 @@ def test_judge():
 
 
 def test_build_query():
-    assert build_query(_album('Bobby "Blue" Bland', "Two Steps From The Blues (Remastered)")) == (
-        "Bobby Bland Two Steps From The Blues vinyle"
-    )
+    album = _album('Bobby "Blue" Bland', "Two Steps From The Blues (Remastered)")
+    assert build_query(album) == "Bobby Bland Two Steps From The Blues vinyle"
+    assert build_query(album, "2ememain") == "Bobby Bland Two Steps From The Blues"  # FR + NL : pas de « vinyle »
 
 
 # --------------------------------------------------------------------------- API de bout en bout
@@ -205,7 +205,7 @@ def test_namur_scoring_end_to_end():
         assert actors == ["piotrv1001~2ememain-listings-scraper", "piotrv1001~vinted-listings-scraper"]
         vinted_input = next(b for a, b in apify.calls if "vinted" in a)
         assert vinted_input["domain"] == "vinted.be" and vinted_input["searchQueries"] == ["Daft Punk Discovery vinyle"]
-        assert next(b for a, b in apify.calls if "2ememain" in a)["searchQuery"] == "Daft Punk Discovery vinyle"
+        assert next(b for a, b in apify.calls if "2ememain" in a)["searchQuery"] == "Daft Punk Discovery"
 
         listings = data["listings"]
         first = listings[0]
@@ -353,3 +353,14 @@ def test_cross_posted_listing_shown_once():
     kept = ranked[0]
     assert kept.also_on and any("Aussi en vente" in n for n in kept.notes)
     assert any("Bonne affaire" in n for n in kept.notes)  # ~37 € contre 60 € sur Discogs
+
+
+def test_more_expensive_than_discogs_is_flagged():
+    from app.offers.scoring import score_listings
+    from app.user_settings import UserSettings
+
+    vinted = Listing(platform="vinted", external_id="1", title="Vinyle Leon Bridges Happiness Anytime",
+                     url="https://v/1", price=30, total_known=32.2, shippable=True)
+    ranked, _ = score_listings([vinted], UserSettings(country="BE"), discogs_reference=25.46)
+    assert ranked[0].delivered_total == 37.2
+    assert any(n.startswith("Plus cher que sur Discogs (+46 %") for n in ranked[0].notes)
