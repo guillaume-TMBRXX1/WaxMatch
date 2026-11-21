@@ -128,6 +128,10 @@ class FakeApify:
                 lat, lon = CITIES[city]
                 return httpx.Response(200, json=[{"lat": str(lat), "lon": str(lon), "display_name": f"{city.title()}, Belgique"}])
             return httpx.Response(200, json=[])
+        if request.url.host == "api.discogs.com":
+            from tests.test_discogs import fake_world
+
+            return fake_world(request)
         if request.url.host != "api.apify.com":
             return fake_spotify(request)
         assert request.headers["Authorization"] == "Bearer AP"
@@ -364,3 +368,63 @@ def test_more_expensive_than_discogs_is_flagged():
     ranked, _ = score_listings([vinted], UserSettings(country="BE"), discogs_reference=25.46)
     assert ranked[0].delivered_total == 37.2
     assert any(n.startswith("Plus cher que sur Discogs (+46 %") for n in ranked[0].notes)
+
+
+def test_real_false_positives_from_namur_scan():
+    """Faux positifs observés lors du scan réel de 30 albums (22/11/2026)."""
+    bo = _album("Bo Diddley", "Bo Diddley")
+    cd = Listing(platform="2ememain", external_id="m2453649222", title="Bo Diddley 'the London sessions'",
+                 url="https://www.2ememain.be/v/cd-dvd/cd-jazz-blues/m2453649222-bo-diddley-the-london-sessions")
+    assert judge(bo, cd)[1] == "objet exclu : catégorie CD/DVD"
+    other = cd.model_copy(update={"url": "https://www.2ememain.be/v/cd-dvd/vinyles-jazz/m1-bo-diddley"})
+    assert judge(bo, other)[1].startswith("autre album de l'artiste")
+    assert judge(bo, _listing("Bo Diddley LP 1958 vinyle original"))[0]  # l'éponyme reste accepté
+
+    duke = _album("Duke Ellington", "Duke Ellington & John Coltrane")
+    ad = Listing(platform="2ememain", external_id="x", title="Duke Ellington & John Coltrane - Duke Ellington & John",
+                 url="https://www.2ememain.be/v/cd-dvd/vinyles-singles/a169078540-duke-ellington-john-coltrane")
+    assert judge(duke, ad)[1] == "publicité (annonce sponsorisée)"
+
+    jj = _album("J.J. Cale", "Troubadour")
+    assert judge(jj, _listing("J.J. Cale Troubadour (Vinyl LP) gebraucht"))[0]
+
+
+def test_scan_fetches_discogs_reference_and_best_sorts_by_deal():
+    from app.discogs.models import DiscogsMatch
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.app.state.discogs_store.put("daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100))
+        client.post("/offers/scan", params={"limit": 5})
+        for _ in range(300):
+            status = client.get("/offers/scan/status").json()
+            if not status["running"]:
+                break
+            time.sleep(0.02)
+        assert status["phase"] == "terminé"
+        best = client.get("/offers/best").json()
+        row = best["albums"][0]
+        assert best["sort"] == "deal" and row["discogs_reference"] == 29.9
+        assert row["vs_discogs"] == round(row["best"]["delivered_total"] / 29.9, 2)
+
+
+def test_backfill_discogs_references():
+    from app.discogs.models import DiscogsMatch
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.get("/offers/albums/al1")  # offres en cache, sans correspondance Discogs à ce moment-là
+        assert client.app.state.discogs_store.get_offers("daft punk|discovery") is None
+        client.app.state.discogs_store.put("daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100))
+        assert client.post("/offers/references").json()["total"] == 1
+        for _ in range(300):
+            status = client.get("/offers/scan/status").json()
+            if not status["running"]:
+                break
+            time.sleep(0.02)
+        assert status["done"] == 1 and status["albums_with_offers"] == 1
+        assert client.get("/offers/best").json()["albums"][0]["discogs_reference"] == 29.9

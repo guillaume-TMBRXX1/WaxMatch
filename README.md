@@ -25,7 +25,8 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 | GET | `/offers/albums/{spotify_id}` | Annonces Vinted, 2ememain, Leboncoin d'un album via Apify, filtrées et **classées par score** (prix livré, bonne affaire vs Discogs, proximité, confiance, fraîcheur). `platforms=`, `refresh=` |
 | POST | `/offers/scan` | Analyse en arrière-plan les albums récents sans résultat en cache. `limit=` (coût estimé renvoyé) |
 | GET | `/offers/scan/status` | Avancée de l'analyse en lot |
-| GET | `/offers/best` | Meilleure annonce connue pour chaque album (`sort=score\|price`), sans coût |
+| POST | `/offers/references` | Récupère en arrière-plan le prix Discogs des albums qui ont des offres |
+| GET | `/offers/best` | Meilleure annonce connue pour chaque album (`sort=deal\|score\|price`, `deal` = écart avec Discogs), sans coût |
 | GET | `/health` | Contrôle de santé : état de la base, nombre d'utilisateurs et de correspondances Discogs |
 
 Base de données : PostgreSQL/Supabase via `DATABASE_URL` (migrations appliquées automatiquement au démarrage, depuis `backend/app/migrations/`). Tests sur une vraie base : `TEST_DATABASE_URL=postgresql://… pytest`.

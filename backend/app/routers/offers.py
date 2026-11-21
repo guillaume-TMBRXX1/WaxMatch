@@ -107,11 +107,48 @@ async def start_scan(
             apify, store, job, todo, settings, config.apify_max_items, config.offers_cache_hours,
             config.apify_concurrency, state.geocoder,
         )
+        # Prix de référence Discogs des albums qui ont des offres : sans lui, impossible de dire
+        # si une offre est une bonne affaire (et de comparer les albums entre eux).
+        job.running, job.phase = True, "références Discogs"
+        try:
+            for album in todo:
+                if any(store.get(p, album.match_key, max_age) and store.get(p, album.match_key, max_age).listings
+                       for p in settings.platforms):
+                    await discogs_reference(request, album, fetch=True)
+        finally:
+            job.running, job.phase = False, "terminé"
 
     state.offers_task = asyncio.create_task(prepare_then_scan())
     status = job.status()
     status["estimated_cost_usd"] = round(limit * sum(COST_PER_SEARCH[p] for p in settings.platforms), 2)
     return status
+
+
+@router.post("/references")
+async def fetch_discogs_references(request: Request, spotify: SpotifyClient = Depends(get_spotify)):
+    """Récupère en arrière-plan le prix Discogs des albums qui ont des offres en cache mais pas encore
+    de référence (utile après un scan fait avant cette fonctionnalité). Suivi : GET /offers/scan/status."""
+    state = request.app.state
+    job: ScanJob = state.offers_job
+    if job.running:
+        return job.status()
+    albums = await load_library(request, spotify, refresh=False)
+    with_offers = {key for (_, key), search in state.offers_store.searches.items() if search.listings}
+    todo = [a for a in albums if a.match_key in with_offers and state.discogs_store.get_offers(a.match_key) is None]
+    job.__init__()
+    job.running, job.phase, job.total = True, "références Discogs", len(todo)
+
+    async def run() -> None:
+        try:
+            for album in todo:
+                if await discogs_reference(request, album, fetch=True) is not None:
+                    job.albums_with_offers += 1
+                job.done += 1
+        finally:
+            job.running, job.phase = False, "terminé"
+
+    state.offers_task = asyncio.create_task(run())
+    return job.status()
 
 
 @router.get("/scan/status")
@@ -122,7 +159,9 @@ async def scan_status(request: Request):
 @router.get("/best")
 async def best_offers(
     request: Request,
-    sort: Literal["score", "price"] = "score",
+    sort: Literal["deal", "score", "price"] = Query(
+        "deal", description="deal = meilleure affaire par rapport à Discogs ; score ; price = moins cher"
+    ),
     limit: int = Query(50, ge=1, le=500),
     spotify: SpotifyClient = Depends(get_spotify),
 ):
@@ -143,6 +182,11 @@ async def best_offers(
         if not result.listings:
             continue
         best = result.listings[0]
+        ratio = (
+            round(best.delivered_total / result.discogs_reference, 2)
+            if result.discogs_reference and best.delivered_total
+            else None
+        )
         rows.append(
             {
                 "spotify_id": album.spotify_id,
@@ -151,11 +195,14 @@ async def best_offers(
                 "cover_url": album.cover_url,
                 "offers_count": len(result.listings),
                 "discogs_reference": result.discogs_reference,
+                "vs_discogs": ratio,  # 0.7 = 30 % moins cher que Discogs (port compris côté annonce)
                 "best": best.model_dump(),
             }
         )
     if sort == "price":
         rows.sort(key=lambda r: r["best"]["delivered_total"])
-    else:
+    elif sort == "score":
         rows.sort(key=lambda r: r["best"]["score"], reverse=True)
+    else:  # les albums sans référence Discogs passent après, triés par score
+        rows.sort(key=lambda r: (r["vs_discogs"] is None, r["vs_discogs"] or 0, -r["best"]["score"]))
     return {"total": len(rows), "sort": sort, "albums": rows[:limit]}
