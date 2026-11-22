@@ -29,6 +29,9 @@ def create_app(
     transport: httpx.AsyncBaseTransport | None = None,  # injecté par les tests
 ) -> FastAPI:
     settings = settings or get_settings()
+    from app.offers import platforms as platform_config
+
+    platform_config.VINTED_CATALOG_IDS[:] = settings.vinted_catalog_ids
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

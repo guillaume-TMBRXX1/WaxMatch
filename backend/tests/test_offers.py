@@ -75,7 +75,7 @@ def _listing(title):
 def test_judge():
     album = _album("Miles Davis", "The Man With The Horn")
     assert judge(album, parse_leboncoin(LBC_ITEM))[0]
-    assert judge(album, _listing("CD Miles Davis The Man With The Horn"))[1].startswith("objet exclu")
+    assert judge(album, _listing("CD Miles Davis The Man With The Horn"))[1] == "pas un vinyle (« cd »)"
     assert judge(album, _listing("Vinyle Miles Davis Kind of Blue"))[1] == "titre de l'album absent"
     assert judge(album, _listing("John Coltrane The Man With The Horn"))[1] == "artiste absent du titre"
 
@@ -227,7 +227,7 @@ def test_namur_scoring_end_to_end():
         assert set(first["components"]) == {"price", "deal", "proximity", "trust", "freshness"}
 
         rejected = next(s for s in data["searches"] if s["platform"] == "vinted")["rejected"]
-        assert sorted(r["reason"] for r in rejected) == ["objet exclu : « cd »", "titre de l'album absent"]
+        assert sorted(r["reason"] for r in rejected) == ["pas un vinyle (« cd »)", "titre de l'album absent"]
 
         # Cache : aucun nouveau run Apify ni géocodage.
         calls, geo = len(apify.calls), apify.geocode_calls

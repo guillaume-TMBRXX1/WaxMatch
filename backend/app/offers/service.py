@@ -16,6 +16,8 @@ from app.offers.scoring import score_listings
 from app.user_settings import UserSettings
 from app.discogs.models import AlbumOffers
 from app.offers.platforms import PLATFORMS, format_hint
+from app.offers import platforms as platform_config
+from app.offers.quality import assess_quality
 from app.spotify.normalize import LibraryAlbum, artist_key, fold, strip_nickname
 
 log = logging.getLogger("waxmatch.offers")
@@ -23,10 +25,6 @@ log = logging.getLogger("waxmatch.offers")
 # Coût réel observé : ~0,001-0,002 $ par recherche (20 annonces max) ; on garde une marge.
 COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003, "discogs": 0.0, "ebay": 0.0}
 
-_EXCLUDED = re.compile(
-    r"\b(cd|cds|compact disc|cassette|cassettes|k7|dvd|blu ray|poster|affiche|t shirt|tshirt|tee shirt|"
-    r"sweat|livre|magazine|pochette vide|pochette seule|sans disque|sans vinyle|partition|badge|mug|cadre)\b"
-)
 
 
 # --------------------------------------------------------------------------- filtrage
@@ -51,10 +49,10 @@ def judge(album: LibraryAlbum, listing: Listing, threshold: float = 85) -> tuple
         return False, "publicité (annonce sponsorisée)", 0.0
     if _2EMEMAIN_CD.search(listing.url):
         return False, "objet exclu : catégorie CD/DVD", 0.0
+    quality = assess_quality(listing)
+    if quality.blocking:
+        return False, quality.blocking, 0.0
     text = fold(listing.title)
-    excluded = _EXCLUDED.search(text)
-    if excluded:
-        return False, f"objet exclu : « {excluded.group(1)} »", 0.0
 
     artist_score = 0.0
     for name in dict.fromkeys([*album.artists, album.primary_artist]):
@@ -168,6 +166,8 @@ async def search_platform(
         if listing is None or listing.external_id in seen:
             continue
         seen.add(listing.external_id)
+        if platform == "vinted" and platform_config.VINTED_CATALOG_IDS:
+            listing.vinyl_source = True  # recherche limitée à la catégorie « Vinyles » de Vinted
         ok, reason, score = judge(album, listing)
         if ok:
             listing.match_score = score

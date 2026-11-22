@@ -123,6 +123,47 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
         {num("max_buy", "Achat maximum", "€")}
         {num("daily_apify_runs", "Recherches Apify par jour", "max")}
       </div>
+      <div className="cluster" style={{ gap: 12, alignItems: "flex-end" }}>
+        <label className="field" style={{ flex: "0 1 200px" }}>
+          <span className="label">État minimum (défauts compris)</span>
+          <select
+            className="select"
+            value={form.min_grade}
+            onChange={(e) => setForm({ ...form, min_grade: e.target.value as ResaleSettings["min_grade"] })}
+          >
+            <option value="G+">G+ (usé, joue bien)</option>
+            <option value="VG">VG (bon état)</option>
+            <option value="VG+">VG+ (très bon état)</option>
+            <option value="NM">NM (quasi neuf)</option>
+          </select>
+        </label>
+      </div>
+      <div className="stack" style={{ gap: 10 }}>
+        {(
+          [
+            ["require_confirmed_vinyl", "Exiger une preuve que c'est un vinyle", "mention vinyle/LP/33t ou catégorie vinyles"],
+            ["exclude_mixed", "Écarter les annonces mixtes", "vinyle + CD, goodies, poster…"],
+            ["allow_no_sleeve", "Accepter les disques sans pochette", "forte décote à la revente"],
+            ["exclude_lots", "Écarter les lots", "valeur par disque difficile à estimer"],
+            ["exclude_reissues", "Écarter les rééditions", "cote inférieure aux originaux"],
+          ] as const
+        ).map(([key, label, hint]) => (
+          <div key={key} className="cluster" style={{ justifyContent: "space-between", gap: 16 }}>
+            <div>
+              <div style={{ fontWeight: 700 }}>{label}</div>
+              <div style={{ color: "var(--ink-2)", fontSize: 13 }}>{hint}</div>
+            </div>
+            <button
+              type="button"
+              className="switch"
+              role="switch"
+              aria-checked={form[key]}
+              aria-label={label}
+              onClick={() => setForm({ ...form, [key]: !form[key] })}
+            />
+          </div>
+        ))}
+      </div>
       <div className="cluster">
         {(["ebay", "vinted", "2ememain", "leboncoin"] as const).map((p) => (
           <button
@@ -305,6 +346,15 @@ export default function ResalePage() {
             )}
           </div>
         </div>
+        {!running && job && (job.filtered_total ?? 0) > 0 && (
+          <p style={{ margin: "10px 0 0", color: "var(--ink-2)" }}>
+            Dernière analyse : {job.filtered_total} annonces écartées —{" "}
+            {Object.entries(job.filtered ?? {})
+              .sort((a, b) => b[1] - a[1])
+              .map(([reason, n]) => `${reason} (${n})`)
+              .join(", ")}
+          </p>
+        )}
         {(error || job?.last_error) && (
           <p className="negative" role="alert" style={{ margin: "10px 0 0" }}>
             {error ?? job?.last_error}
