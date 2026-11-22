@@ -11,6 +11,7 @@ const SORTS = [
   { value: "deal", label: "Bonne affaire" },
   { value: "score", label: "Score" },
   { value: "price", label: "Prix" },
+  { value: "target", label: "Sous ma cible" },
 ] as const;
 
 export default function DealsPage() {

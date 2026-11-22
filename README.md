@@ -8,6 +8,7 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 - `backend/` : API FastAPI (connexion Spotify, bibliothèque normalisée, puis recherche et scoring des offres)
 - `notebook.ipynb` : lance l'API dans Google Colab derrière un tunnel HTTPS (mode d'emploi dans le notebook)
 - `docs/ROADMAP.md` : feuille de route complète
+- `docs/REVENTE.md` : plan de l'onglet « Revente » (achat-revente de vinyles)
 
 ## Endpoints disponibles
 
@@ -28,6 +29,8 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 | GET | `/offers/scan/status` | Avancée de l'analyse en lot |
 | POST | `/offers/references` | Récupère en arrière-plan le prix Discogs des albums qui ont des offres |
 | GET | `/offers/best` | Meilleure annonce connue pour chaque album (`sort=deal\|score\|price`, `deal` = écart avec Discogs), sans coût |
+| GET / PUT / DELETE | `/targets`, `/targets/{spotify_id}` | Prix cible par album : les annonces livrées en dessous sont signalées |
+| GET / POST / DELETE | `/favorites` | Favoris et suivi de leur état |
 | GET | `/health` | Contrôle de santé : état de la base, nombre d'utilisateurs et de correspondances Discogs |
 
 Base de données : PostgreSQL/Supabase via `DATABASE_URL` (migrations appliquées automatiquement au démarrage, depuis `backend/app/migrations/`). Tests sur une vraie base : `TEST_DATABASE_URL=postgresql://… pytest`.

@@ -191,3 +191,15 @@ def test_favorites_persist_in_database(tmp_path):
         favs = c.get("/favorites").json()
         assert len(favs) == 1 and favs[0]["listing"]["external_id"] == listing["external_id"]
         assert favs[0]["status"] == "en ligne"  # annonces relues depuis la base
+
+
+def test_targets_persist_in_database(tmp_path):
+    from tests.test_offers import FakeApify
+
+    settings = _settings(tmp_path, apify_token="AP")
+    with TestClient(create_app(settings, transport=httpx.MockTransport(FakeApify())), base_url="https://testserver") as c:
+        _login(c)
+        assert c.put("/targets/al1", json={"target_price": 23.456}).json()["target_price"] == 23.46
+    with TestClient(create_app(settings, transport=httpx.MockTransport(FakeApify())), base_url="https://testserver") as c:
+        _login(c)
+        assert c.get("/targets").json() == [{"spotify_id": "al1", "target_price": 23.46}]

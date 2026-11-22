@@ -13,7 +13,8 @@ from app.discogs.service import DiscogsStore, EnrichJob
 from app.offers.service import OffersStore, ScanJob
 from app.geo import Geocoder
 from app.favorites import FavoritesStore
-from app.routers import auth, discogs, favorites, library, offers, settings as settings_router
+from app.targets import TargetsStore
+from app.routers import auth, discogs, favorites, library, offers, settings as settings_router, targets
 from app.user_settings import SettingsStore
 from app.repos import PostgresLibraryRepo
 from app.store import InMemoryTokenStore, PostgresTokenStore, TokenStore
@@ -42,6 +43,7 @@ def create_app(
         await app.state.offers_store.load()
         app.state.settings_store = SettingsStore(pool)
         app.state.favorites_store = FavoritesStore(pool)
+        app.state.targets_store = TargetsStore(pool)
         app.state.geocoder = Geocoder(app.state.http, settings.geocoder_user_agent, pool)
         await app.state.geocoder.load()
         yield
@@ -87,6 +89,7 @@ def create_app(
     app.include_router(offers.router)
     app.include_router(settings_router.router)
     app.include_router(favorites.router)
+    app.include_router(targets.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

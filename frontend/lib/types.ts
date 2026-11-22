@@ -53,6 +53,7 @@ export interface Listing {
   reference?: number | null;
   notes: string[];
   also_on: string[];
+  under_target?: boolean;
 }
 
 export interface AlbumListings {
@@ -61,6 +62,7 @@ export interface AlbumListings {
   title: string;
   discogs_reference: number | null;
   discogs_by_condition?: Record<string, number>;
+  target_price?: number | null;
   listings: Listing[];
   unreachable: Listing[];
   discogs_market?: DiscogsMarketItem[];
@@ -84,6 +86,8 @@ export interface BestRow {
   offers_count: number;
   discogs_reference: number | null;
   vs_discogs: number | null;
+  target_price?: number | null;
+  under_target?: boolean;
   best: Listing;
 }
 

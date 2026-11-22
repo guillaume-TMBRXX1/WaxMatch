@@ -219,6 +219,7 @@ def build_album_listings(
     settings: UserSettings,
     discogs_reference: float | None,
     discogs_offers: AlbumOffers | None = None,
+    target_price: float | None = None,
 ) -> AlbumListings:
     # Le filtre est réappliqué aux résultats en cache : toute amélioration du filtre vaut aussi
     # pour les recherches déjà faites (et payées), sans relancer Apify.
@@ -238,12 +239,18 @@ def build_album_listings(
     market.sort(key=lambda lst: lst.price or 0)
     suggestions = discogs_offers.price_suggestions if discogs_offers else None
     ranked, unreachable = score_listings(raw, settings, discogs_reference, price_suggestions=suggestions)
+    if target_price:
+        for lst in ranked:
+            if lst.delivered_total is not None and lst.delivered_total <= target_price:
+                lst.under_target = True
+                lst.notes.insert(0, f"Sous ton prix cible ({target_price:.2f} €)".replace(".", ","))
     return AlbumListings(
         spotify_id=album.spotify_id,
         artist=album.primary_artist,
         title=album.title_clean,
         discogs_reference=discogs_reference,
         discogs_by_condition=suggestions or {},
+        target_price=target_price,
         listings=ranked,
         unreachable=unreachable,
         discogs_market=market,
@@ -262,6 +269,7 @@ async def album_listings(
     geocoder: Geocoder | None = None,
     discogs_reference: float | None = None,
     discogs_offers: AlbumOffers | None = None,
+    target_price: float | None = None,
 ) -> AlbumListings:
     async def one(platform: str) -> PlatformSearch:
         cached = None if refresh else store.get(platform, album.match_key, cache_hours * 3600)
@@ -273,7 +281,7 @@ async def album_listings(
         return result
 
     searches = await asyncio.gather(*(one(p) for p in settings.apify_platforms))
-    return build_album_listings(album, list(searches), settings, discogs_reference, discogs_offers)
+    return build_album_listings(album, list(searches), settings, discogs_reference, discogs_offers, target_price)
 
 
 # --------------------------------------------------------------------------- analyse en lot
