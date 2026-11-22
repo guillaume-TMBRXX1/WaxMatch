@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { use, useState } from "react";
+import { FavoriteButton } from "@/components/FavoriteButton";
 import { ErrorState } from "@/components/States";
+import { useFavorites } from "@/lib/favorites";
 import { useApi } from "@/lib/api";
 import { formatDelta, formatPrice, PLATFORM_LABEL } from "@/lib/format";
 import type { Album, AlbumListings, Listing } from "@/lib/types";
@@ -15,12 +17,25 @@ const COMPONENT_LABEL: Record<string, string> = {
   freshness: "Fraîcheur",
 };
 
-function ListingRow({ listing, reference, first }: { listing: Listing; reference: number | null; first: boolean }) {
+function ListingRow({
+  listing,
+  reference,
+  first,
+  favorite,
+  onToggleFavorite,
+}: {
+  listing: Listing;
+  reference: number | null;
+  first: boolean;
+  favorite: boolean;
+  onToggleFavorite: () => void;
+}) {
   const ref = listing.reference ?? reference; // cote Discogs de l'état de l'annonce si connue
   const delta = ref && listing.delivered_total ? formatDelta(listing.delivered_total / ref) : null;
   const hot = ref != null && listing.delivered_total != null && listing.delivered_total <= ref * 0.7;
   return (
-    <article className={`card${first ? " featured" : ""}${hot ? " hot" : ""}`}>
+    <article className={`card${first ? " featured" : ""}${hot ? " hot" : ""}`} style={{ position: "relative" }}>
+      <FavoriteButton active={favorite} onToggle={onToggleFavorite} style={{ position: "absolute", top: 10, left: 10, zIndex: 1 }} />
       <div className="deal-row">
         {listing.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -88,6 +103,7 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
   const { id } = use(params);
   const library = useApi<{ albums: Album[] }>("/library/albums?limit=2000&include_singles=true");
   const [refresh, setRefresh] = useState(0);
+  const fav = useFavorites();
   const offers = useApi<AlbumListings>(`/offers/albums/${id}${refresh ? `?refresh=true&r=${refresh}` : ""}`);
   const grades = Object.entries(offers.data?.discogs_by_condition ?? {});
   const album = library.data?.albums.find((a) => a.spotify_id === id);
@@ -202,7 +218,14 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
       ) : (
         <div className="stack">
           {offers.data?.listings.map((l, i) => (
-            <ListingRow key={`${l.platform}-${l.external_id}`} listing={l} reference={offers.data!.discogs_reference} first={i === 0} />
+            <ListingRow
+              key={`${l.platform}-${l.external_id}`}
+              listing={l}
+              reference={offers.data!.discogs_reference}
+              first={i === 0}
+              favorite={fav.isFavorite(l)}
+              onToggleFavorite={() => fav.toggle(id, l)}
+            />
           ))}
         </div>
       )}

@@ -663,6 +663,11 @@ button.pill[aria-pressed="true"] {
   }
 }
 
+.fav-btn[aria-pressed="true"] {
+  color: var(--ochre);
+  border-color: color-mix(in srgb, var(--ochre) 45%, transparent);
+}
+
 .negative {
   color: var(--live);
 }
@@ -813,11 +818,11 @@ button.pill[aria-pressed="true"] {
 .nav-mobile a {
   flex: 1;
   text-align: center;
-  padding: 10px 4px;
+  padding: 10px 2px;
   border-radius: 999px;
   text-decoration: none;
-  font: 700 11px var(--font-ui);
-  letter-spacing: 0.08em;
+  font: 700 10.5px var(--font-ui);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--ink-2);
 }

@@ -87,6 +87,19 @@ export interface BestRow {
   best: Listing;
 }
 
+export interface Favorite {
+  spotify_id: string;
+  artist: string;
+  album_title: string;
+  cover_url: string | null;
+  listing: Listing;
+  saved_at: number;
+  status: "en ligne" | "disparue" | "à vérifier";
+  current_price: number | null;
+  price_change: number | null;
+  last_checked: number | null;
+}
+
 export interface UserSettings {
   city: string | null;
   country: string;

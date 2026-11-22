@@ -174,3 +174,20 @@ def test_listings_settings_and_geocodes_in_database(tmp_path):
         data = c.get("/offers/albums/al1").json()
         assert all(s["from_cache"] for s in data["searches"]) and data["listings"][0]["delivery_mode"] == "main propre"
     assert len(apify.calls) == 2 and apify.geocode_calls == geocoded
+
+
+def test_favorites_persist_in_database(tmp_path):
+    from tests.test_offers import FakeApify
+
+    apify = FakeApify()
+    settings = _settings(tmp_path, apify_token="AP")
+    with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
+        c.app.state.geocoder.min_interval = 0
+        _login(c)
+        listing = c.get("/offers/albums/al1").json()["listings"][0]
+        assert c.post("/favorites", json={"spotify_id": "al1", "listing": listing}).status_code == 201
+    with TestClient(create_app(settings, transport=httpx.MockTransport(apify)), base_url="https://testserver") as c:
+        _login(c)
+        favs = c.get("/favorites").json()
+        assert len(favs) == 1 and favs[0]["listing"]["external_id"] == listing["external_id"]
+        assert favs[0]["status"] == "en ligne"  # annonces relues depuis la base
