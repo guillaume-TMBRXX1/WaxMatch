@@ -115,6 +115,11 @@ class OffersStore:
             return found
         return None
 
+    def last_searched(self, match_key: str, platforms: list[str]) -> float | None:
+        """Date de la plus ancienne des dernières recherches de cet album (None = jamais analysé)."""
+        dates = [s.searched_at for p in platforms if (s := self.searches.get((p, match_key)))]
+        return min(dates) if len(dates) == len(platforms) and dates else None
+
     async def put(self, match_key: str, search: PlatformSearch) -> None:
         self.searches[(search.platform, match_key)] = search
         if self.pool is not None:
@@ -231,12 +236,14 @@ def build_album_listings(
     raw = [lst for s in searches for lst in s.listings]
     if "discogs" in settings.platforms:
         raw += discogs_listings(discogs_offers)
-    ranked, unreachable = score_listings(raw, settings, discogs_reference)
+    suggestions = discogs_offers.price_suggestions if discogs_offers else None
+    ranked, unreachable = score_listings(raw, settings, discogs_reference, price_suggestions=suggestions)
     return AlbumListings(
         spotify_id=album.spotify_id,
         artist=album.primary_artist,
         title=album.title_clean,
         discogs_reference=discogs_reference,
+        discogs_by_condition=suggestions or {},
         listings=ranked,
         unreachable=unreachable,
         searches=searches,

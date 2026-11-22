@@ -59,6 +59,16 @@ export default function DealsPage() {
     }
   }
 
+  async function refreshReferences() {
+    setScanError(null);
+    try {
+      setStatus(await api<ScanStatus>("/offers/references", { method: "POST" }));
+      poll();
+    } catch (e) {
+      setScanError(e instanceof ApiError ? e.message : String(e));
+    }
+  }
+
   const running = status?.running ?? false;
   const rows = best.data?.albums ?? [];
 
@@ -100,12 +110,14 @@ export default function DealsPage() {
               </>
             ) : (
               <p style={{ margin: "6px 0 0", color: "var(--ink-2)" }}>
-                Cherche des offres pour tes albums les plus récents sans résultat récent (≈ 0,005 $ par album).
+                Analyse d&apos;abord les albums jamais analysés, puis les plus anciennement analysés : en
+                relançant, tu couvres toute ta bibliothèque (≈ 0,005 $ par album). Pour un album précis, ouvre sa
+                fiche depuis la bibliothèque.
               </p>
             )}
           </div>
           <div className="cluster">
-            <label className="field" style={{ width: 150 }}>
+            <label className="field" style={{ width: 210 }}>
               <span className="sr-only">Nombre d&apos;albums à analyser</span>
               <select
                 className="select"
@@ -118,10 +130,20 @@ export default function DealsPage() {
                     {n} albums
                   </option>
                 ))}
+                <option value={5000}>Toute la bibliothèque</option>
               </select>
             </label>
             <button type="button" className="btn" onClick={startScan} disabled={running}>
               {running ? "Analyse…" : "Analyser"}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={refreshReferences}
+              disabled={running}
+              title="Récupère la cote Discogs par état des albums qui ont des offres (gratuit)"
+            >
+              Mettre à jour les cotes Discogs
             </button>
           </div>
         </div>

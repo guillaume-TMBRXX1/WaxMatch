@@ -78,6 +78,17 @@ def fake_world(request: httpx.Request) -> httpx.Response:
                 ]
             },
         )
+    if path == "/marketplace/price_suggestions/12":  # édition la plus répandue (3000 collections)
+        return httpx.Response(
+            200,
+            json={
+                "Mint (M)": {"currency": "EUR", "value": 60.0},
+                "Near Mint (NM or M-)": {"currency": "EUR", "value": 50.0},
+                "Very Good Plus (VG+)": {"currency": "EUR", "value": 40.0},
+                "Very Good (VG)": {"currency": "EUR", "value": 30.0},
+                "Good Plus (G+)": {"currency": "EUR", "value": 15.0},
+            },
+        )
     if path == "/marketplace/stats/11":
         return httpx.Response(200, json={"lowest_price": {"value": 85.0, "currency": "EUR"}, "num_for_sale": 4})
     if path == "/marketplace/stats/12":

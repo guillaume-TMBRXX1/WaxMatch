@@ -27,7 +27,8 @@ async def discogs_reference(request: Request, album: LibraryAlbum, fetch: bool) 
     """Prix Discogs typique livré (voir discogs_reference_price) : cache, ou interrogation si `fetch`."""
     store = request.app.state.discogs_store
     cached = store.get_offers(album.match_key)
-    if cached is not None or not fetch:
+    # Données en cache antérieures aux prix conseillés par état : on les complète.
+    if not fetch or (cached is not None and cached.price_suggestions is not None):
         return discogs_reference_price(cached)
     match = store.get(album.match_key)
     if not (match and match.found and request.app.state.settings.discogs_token):
@@ -78,7 +79,7 @@ async def offers_for_album(
 @router.post("/scan")
 async def start_scan(
     request: Request,
-    limit: int = Query(10, ge=1, le=800, description="Nombre d'albums à analyser (les plus récemment ajoutés)"),
+    limit: int = Query(10, ge=1, le=5000, description="Nombre d'albums à analyser"),
     platforms: list[PlatformName] | None = Query(None, description="Par défaut : celles de tes réglages"),
     spotify: SpotifyClient = Depends(get_spotify),
     apify: ApifyClient = Depends(get_apify),
@@ -101,12 +102,21 @@ async def start_scan(
             return
         store = state.offers_store
         max_age = config.offers_cache_hours * 3600
-        todo = [
+        # Rotation sur toute la bibliothèque : d'abord les albums jamais analysés (les plus récents en
+        # premier), puis ceux dont la dernière analyse est la plus ancienne. Les analyses fraîches
+        # (moins de 24 h) sont sautées : relancer des scans finit par couvrir tous les albums.
+        candidates = [
             a
-            for a in sorted(albums, key=lambda a: a.added_at.timestamp() if a.added_at else 0, reverse=True)
+            for a in albums
             if a.album_type != "single"
             and any(store.get(p, a.match_key, max_age) is None for p in settings.apify_platforms)
-        ][:limit]
+        ]
+
+        def rotation_key(a):
+            last = store.last_searched(a.match_key, settings.apify_platforms)
+            return (last is not None, last or 0, -(a.added_at.timestamp() if a.added_at else 0))
+
+        todo = sorted(candidates, key=rotation_key)[:limit]
         await run_scan(
             apify, store, job, todo, settings, config.apify_max_items, config.offers_cache_hours,
             config.apify_concurrency, state.geocoder,
@@ -138,7 +148,14 @@ async def fetch_discogs_references(request: Request, spotify: SpotifyClient = De
         return job.status()
     albums = await load_library(request, spotify, refresh=False)
     with_offers = {key for (_, key), search in state.offers_store.searches.items() if search.listings}
-    todo = [a for a in albums if a.match_key in with_offers and state.discogs_store.get_offers(a.match_key) is None]
+    todo = [
+        a
+        for a in albums
+        if a.match_key in with_offers
+        and (
+            (cached := state.discogs_store.get_offers(a.match_key)) is None or cached.price_suggestions is None
+        )
+    ]
     job.__init__()
     job.running, job.phase, job.total = True, "références Discogs", len(todo)
 
@@ -191,11 +208,8 @@ async def best_offers(
         if not result.listings:
             continue
         best = result.listings[0]
-        ratio = (
-            round(best.delivered_total / result.discogs_reference, 2)
-            if result.discogs_reference and best.delivered_total
-            else None
-        )
+        reference = best.reference or result.discogs_reference  # cote de l'état de l'annonce si connue
+        ratio = round(best.delivered_total / reference, 2) if reference and best.delivered_total else None
         rows.append(
             {
                 "spotify_id": album.spotify_id,

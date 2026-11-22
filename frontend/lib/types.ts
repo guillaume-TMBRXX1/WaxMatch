@@ -49,6 +49,8 @@ export interface Listing {
   distance_km: number | null;
   pickup_possible: boolean;
   components: Record<string, number>;
+  grade?: string | null;
+  reference?: number | null;
   notes: string[];
   also_on: string[];
 }
@@ -58,6 +60,7 @@ export interface AlbumListings {
   artist: string;
   title: string;
   discogs_reference: number | null;
+  discogs_by_condition?: Record<string, number>;
   listings: Listing[];
   unreachable: Listing[];
   searches: { platform: Platform; raw_count: number; error: string | null; from_cache: boolean }[];

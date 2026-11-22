@@ -408,7 +408,8 @@ def test_scan_fetches_discogs_reference_and_best_sorts_by_deal():
         row = best["albums"][0]
         # Médiane des éditions en vente (29,90 € et 85 €) + 8 € de port estimé.
         assert best["sort"] == "deal" and row["discogs_reference"] == 65.45
-        assert row["vs_discogs"] == round(row["best"]["delivered_total"] / 65.45, 2)
+        # L'écart se calcule sur la cote Discogs de l'état de l'annonce (VG : 30 + 8 €), plus précise.
+        assert row["vs_discogs"] == round(row["best"]["delivered_total"] / row["best"]["reference"], 2)
 
 
 def test_backfill_discogs_references():
@@ -510,3 +511,88 @@ def test_best_includes_albums_only_on_discogs():
         assert apify.calls == []
         best = client.get("/offers/best").json()
         assert best["total"] == 1 and best["albums"][0]["best"]["platform"] == "discogs"
+
+
+# --------------------------------------------------------------------------- cote Discogs par état
+
+
+def test_parse_price_suggestions_and_grades():
+    from app.discogs.service import parse_price_suggestions
+    from app.offers.scoring import condition_grade, graded_reference
+
+    raw = {"Near Mint (NM or M-)": {"currency": "EUR", "value": 50.123}, "Very Good Plus (VG+)": {"value": 40},
+           "Good (G)": {"value": None}, "bizarre": {"value": 1}}
+    assert parse_price_suggestions(raw) == {"NM": 50.12, "VG+": 40.0}
+    assert condition_grade("Neuf avec étiquette", "") == "NM"
+    assert condition_grade(None, "Album neuf sous blister") == "M"
+    assert condition_grade("Très bon état", "") == "VG+"
+    assert condition_grade("Bon état", "") == "VG"
+    assert condition_grade("Satisfaisant", "") == "G+"
+    assert condition_grade(None, "Vinyle Daft Punk Discovery") == "VG"  # inconnu : hypothèse prudente
+    assert graded_reference("VG", {"VG+": 40}) == 48  # état voisin + 8 € de port
+    assert graded_reference("VG", {}) is None
+
+
+def test_listings_compared_to_graded_discogs_price():
+    from app.discogs.models import DiscogsMatch
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.put("/settings", json={"city": "Namur", "country": "BE", "platforms": ["vinted", "2ememain"]})
+        client.app.state.discogs_store.put("daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100))
+        data = client.get("/offers/albums/al1").json()
+        assert data["discogs_by_condition"]["VG+"] == 40.0
+
+        vinted = next(l for l in data["listings"] if l["platform"] == "vinted")  # « Très bon état »
+        assert vinted["grade"] == "VG+" and vinted["reference"] == 48.0
+        assert any("cote Discogs VG+" in n for n in vinted["notes"])
+
+        jambes = next(l for l in data["listings"] if "m111" in l["url"])  # état inconnu -> VG (30 + 8)
+        assert jambes["grade"] == "VG" and jambes["reference"] == 38.0
+        assert any(n.startswith("Bonne affaire : 34 % sous la cote Discogs VG") for n in jambes["notes"])
+
+        best = client.get("/offers/best").json()["albums"][0]
+        assert best["vs_discogs"] == round(best["best"]["delivered_total"] / best["best"]["reference"], 2)
+
+
+def test_old_discogs_cache_gets_price_suggestions():
+    """Offres Discogs mises en cache avant cette fonctionnalité : complétées par /offers/references."""
+    from app.discogs.models import AlbumOffers, DiscogsMatch
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.get("/offers/albums/al1")
+        store = client.app.state.discogs_store
+        match = DiscogsMatch(found=True, kind="master", id=100)
+        store.put("daft punk|discovery", match)
+        store.offers["daft punk|discovery"] = AlbumOffers(match=match)  # ancien format : pas de cote
+        assert client.post("/offers/references").json()["total"] == 1
+        for _ in range(300):
+            if not client.get("/offers/scan/status").json()["running"]:
+                break
+            time.sleep(0.02)
+        assert store.get_offers("daft punk|discovery").price_suggestions["NM"] == 50.0
+
+
+def test_scan_rotates_over_whole_library():
+    apify = FakeApify()
+    with TestClient(_app(apify), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+
+        def scan_one():
+            client.post("/offers/scan", params={"limit": 1})
+            for _ in range(300):
+                if not client.get("/offers/scan/status").json()["running"]:
+                    break
+                time.sleep(0.02)
+            return {(b.get("searchQueries") or [b.get("searchQuery")])[0] for _, b in apify.calls}
+
+        first = scan_one()  # le plus récemment ajouté et jamais analysé : Kind of Blue
+        assert all("Miles Davis" in q for q in first)
+        second = scan_one() - first  # puis le suivant, au lieu de recommencer par le plus récent
+        assert second and all("Daft Punk" in q for q in second)
