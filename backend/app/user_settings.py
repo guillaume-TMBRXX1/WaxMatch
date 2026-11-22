@@ -5,8 +5,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Priority = Literal["price", "balanced_price", "balanced", "pickup"]
-PlatformName = Literal["vinted", "leboncoin", "2ememain", "discogs"]
-APIFY_PLATFORMS = {"vinted", "leboncoin", "2ememain"}  # interrogées via Apify (Discogs : API officielle)
+PlatformName = Literal["vinted", "leboncoin", "2ememain", "discogs", "ebay"]
+APIFY_PLATFORMS = {"vinted", "leboncoin", "2ememain"}  # interrogées via Apify (Discogs, eBay : API officielles)
 
 # Pondérations du score (total 100) selon la priorité choisie.
 PRESETS: dict[str, dict[str, float]] = {

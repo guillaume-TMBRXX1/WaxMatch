@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from rapidfuzz import fuzz
 
 from app.offers.apify import ApifyClient, ApifyError
+from app.offers.ebay import EbayClient, EbayError, parse_ebay
 from app.geo import Geocoder
 from app.offers.models import AlbumListings, Listing, PlatformSearch, RejectedListing
 from app.offers.scoring import score_listings
@@ -20,7 +21,7 @@ from app.spotify.normalize import LibraryAlbum, artist_key, fold, strip_nickname
 log = logging.getLogger("waxmatch.offers")
 
 # Coût réel observé : ~0,001-0,002 $ par recherche (20 annonces max) ; on garde une marge.
-COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003, "discogs": 0.0}
+COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003, "discogs": 0.0, "ebay": 0.0}
 
 _EXCLUDED = re.compile(
     r"\b(cd|cds|compact disc|cassette|cassettes|k7|dvd|blu ray|poster|affiche|t shirt|tshirt|tee shirt|"
@@ -86,7 +87,7 @@ def judge(album: LibraryAlbum, listing: Listing, threshold: float = 85) -> tuple
 # Mot ajouté à la recherche. Sur 2ememain (annonces en français ET en néerlandais : « vinyl », « LP »,
 # « plaat »), « vinyle » éliminait des annonces pertinentes : on cherche artiste + titre seuls,
 # le filtre écarte ensuite CD, K7, etc.
-QUERY_SUFFIX = {"vinted": " vinyle", "leboncoin": " vinyle", "2ememain": ""}
+QUERY_SUFFIX = {"vinted": " vinyle", "leboncoin": " vinyle", "2ememain": "", "ebay": " vinyl"}
 
 
 def build_query(album: LibraryAlbum, platform: str = "vinted") -> str:
@@ -213,6 +214,28 @@ def discogs_listings(offers: AlbumOffers | None) -> list[Listing]:
     return result
 
 
+async def search_ebay(ebay: EbayClient, album: LibraryAlbum, max_items: int, country: str) -> PlatformSearch:
+    query = build_query(album, "ebay")
+    search = PlatformSearch(platform="ebay", query=query)
+    try:
+        items = await ebay.search(query, limit=max_items, country=country)
+    except EbayError as exc:
+        search.error = str(exc)
+        return search
+    search.raw_count = len(items)
+    for item in items:
+        listing = parse_ebay(item)
+        if listing is None:
+            continue
+        ok, reason, score = judge(album, listing)
+        if ok:
+            listing.match_score = score
+            search.listings.append(listing)
+        else:
+            search.rejected.append(RejectedListing(platform="ebay", title=listing.title, url=listing.url, reason=reason))
+    return search
+
+
 def build_album_listings(
     album: LibraryAlbum,
     searches: list[PlatformSearch],
@@ -270,17 +293,22 @@ async def album_listings(
     discogs_reference: float | None = None,
     discogs_offers: AlbumOffers | None = None,
     target_price: float | None = None,
+    ebay: EbayClient | None = None,
 ) -> AlbumListings:
     async def one(platform: str) -> PlatformSearch:
         cached = None if refresh else store.get(platform, album.match_key, cache_hours * 3600)
         if cached:
             return cached.model_copy(update={"from_cache": True})
-        result = await search_platform(apify, platform, album, max_items, settings.country, geocoder)
+        if platform == "ebay":
+            result = await search_ebay(ebay, album, max_items, settings.country)
+        else:
+            result = await search_platform(apify, platform, album, max_items, settings.country, geocoder)
         if result.error is None:  # on ne met pas les échecs en cache
             await store.put(album.match_key, result)
         return result
 
-    searches = await asyncio.gather(*(one(p) for p in settings.apify_platforms))
+    platforms = settings.apify_platforms + (["ebay"] if ebay is not None and "ebay" in settings.platforms else [])
+    searches = await asyncio.gather(*(one(p) for p in platforms))
     return build_album_listings(album, list(searches), settings, discogs_reference, discogs_offers, target_price)
 
 
@@ -317,6 +345,7 @@ async def run_scan(
     cache_hours: float,
     concurrency: int = 1,
     geocoder: Geocoder | None = None,
+    ebay: EbayClient | None = None,
 ) -> None:
     job.running, job.phase, job.started_at, job.total = True, "recherche des annonces", time.time(), len(albums)
     job.estimated_cost_usd = round(len(albums) * sum(COST_PER_SEARCH[p] for p in settings.platforms), 2)
@@ -328,7 +357,7 @@ async def run_scan(
         async with sem:
             try:
                 result = await album_listings(
-                    apify, store, album, settings, max_items, cache_hours, geocoder=geocoder
+                    apify, store, album, settings, max_items, cache_hours, geocoder=geocoder, ebay=ebay
                 )
                 job.listings_found += len(result.listings)
                 job.albums_with_offers += bool(result.listings)

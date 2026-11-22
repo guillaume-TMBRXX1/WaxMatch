@@ -13,8 +13,11 @@ from app.discogs.service import DiscogsStore, EnrichJob
 from app.offers.service import OffersStore, ScanJob
 from app.geo import Geocoder
 from app.favorites import FavoritesStore
+from app.offers.ebay import EbayClient
+from app.resale.service import ResaleJob
+from app.resale.store import ResaleStore
 from app.targets import TargetsStore
-from app.routers import auth, discogs, favorites, library, offers, settings as settings_router, targets
+from app.routers import auth, discogs, favorites, library, offers, resale, settings as settings_router, targets
 from app.user_settings import SettingsStore
 from app.repos import PostgresLibraryRepo
 from app.store import InMemoryTokenStore, PostgresTokenStore, TokenStore
@@ -43,11 +46,18 @@ def create_app(
         await app.state.offers_store.load()
         app.state.settings_store = SettingsStore(pool)
         app.state.favorites_store = FavoritesStore(pool)
+        app.state.ebay = (
+            EbayClient(app.state.http, settings.ebay_client_id, settings.ebay_client_secret)
+            if settings.ebay_client_id and settings.ebay_client_secret
+            else None
+        )
         app.state.targets_store = TargetsStore(pool)
+        app.state.resale_store = ResaleStore(pool)
+        await app.state.resale_store.load()
         app.state.geocoder = Geocoder(app.state.http, settings.geocoder_user_agent, pool)
         await app.state.geocoder.load()
         yield
-        for task in (app.state.discogs_task, app.state.offers_task):
+        for task in (app.state.discogs_task, app.state.offers_task, app.state.resale_task):
             if task and not task.done():
                 task.cancel()
         await app.state.http.aclose()
@@ -65,6 +75,8 @@ def create_app(
     app.state.discogs_task = None
     app.state.offers_job = ScanJob()
     app.state.offers_task = None
+    app.state.resale_job = ResaleJob()
+    app.state.resale_task = None
 
     app.add_middleware(
         SessionMiddleware,
@@ -90,6 +102,7 @@ def create_app(
     app.include_router(settings_router.router)
     app.include_router(favorites.router)
     app.include_router(targets.router)
+    app.include_router(resale.router)
 
     @app.get("/health", tags=["meta"])
     async def health():

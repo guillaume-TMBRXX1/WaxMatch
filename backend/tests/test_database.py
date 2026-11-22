@@ -203,3 +203,21 @@ def test_targets_persist_in_database(tmp_path):
     with TestClient(create_app(settings, transport=httpx.MockTransport(FakeApify())), base_url="https://testserver") as c:
         _login(c)
         assert c.get("/targets").json() == [{"spotify_id": "al1", "target_price": 23.46}]
+
+
+def test_resale_journal_persists(tmp_path):
+    from tests.test_resale import FakeWorld, _wait
+
+    world = FakeWorld()
+    settings = _settings(tmp_path, apify_token="AP", ebay_client_id="EID", ebay_client_secret="ES")
+    with TestClient(create_app(settings, transport=httpx.MockTransport(world)), base_url="https://testserver") as c:
+        _login(c)
+        c.post("/resale/watchlist/build")
+        _wait(c)
+        c.post("/resale/scan")
+        assert _wait(c)["new_opportunities"] == 1
+    with TestClient(create_app(settings, transport=httpx.MockTransport(world)), base_url="https://testserver") as c:
+        _login(c)
+        stats = c.get("/resale/stats").json()
+        assert stats["watched"] == 1 and stats["scanned"] == 1 and stats["active"] == 1 and stats["apify_runs_today"] == 2
+        assert c.get("/resale/opportunities").json()[0]["margin"] == 16.0

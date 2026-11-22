@@ -7,6 +7,7 @@ export const NAV_ITEMS = [
   { href: "/", label: "Accueil", short: "Accueil" },
   { href: "/bibliotheque", label: "Bibliothèque", short: "Biblio" },
   { href: "/affaires", label: "Affaires", short: "Affaires" },
+  { href: "/revente", label: "Revente", short: "Revente" },
   { href: "/favoris", label: "Favoris", short: "Favoris" },
   { href: "/reglages", label: "Réglages", short: "Réglages" },
 ];
@@ -32,7 +33,7 @@ export function MobileNav() {
   const pathname = usePathname();
   return (
     <nav className="nav-mobile glass" aria-label="Navigation">
-      {NAV_ITEMS.map((item) => (
+      {NAV_ITEMS.filter((item) => item.href !== "/").map((item) => (
         <Link key={item.href} href={item.href} aria-current={isActive(pathname, item.href) ? "page" : undefined}>
           {item.short}
         </Link>

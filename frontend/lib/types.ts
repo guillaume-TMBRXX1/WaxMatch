@@ -1,4 +1,4 @@
-export type Platform = "vinted" | "leboncoin" | "2ememain" | "discogs";
+export type Platform = "vinted" | "leboncoin" | "2ememain" | "discogs" | "ebay";
 
 export interface DiscogsMatch {
   found: boolean;
@@ -102,6 +102,83 @@ export interface Favorite {
   current_price: number | null;
   price_change: number | null;
   last_checked: number | null;
+}
+
+export interface Opportunity {
+  key: string;
+  watch_key: string;
+  artist: string;
+  title: string;
+  cover_url: string | null;
+  listing: Listing;
+  grade: string;
+  buy_total: number;
+  resale_estimate: number;
+  resale_basis: string;
+  margin: number;
+  roi: number;
+  demand: number;
+  risks: string[];
+  status: "active" | "disparue";
+  first_seen: number;
+  last_seen: number;
+}
+
+export interface WatchItem {
+  key: string;
+  artist: string;
+  title: string;
+  discogs_id: number;
+  year: number | null;
+  styles: string[];
+  want: number;
+  have: number;
+  demand: number;
+  last_scanned: number | null;
+}
+
+export interface ResaleSettings {
+  genre: string;
+  styles: string[];
+  extra_genres: string[];
+  watchlist_size: number;
+  min_margin: number;
+  min_roi: number;
+  max_buy: number;
+  packaging: number;
+  vinted_discount: number;
+  discogs_to_vinted: number;
+  platforms: ("vinted" | "2ememain" | "ebay" | "leboncoin")[];
+  daily_apify_runs: number;
+}
+
+export interface ResaleStats {
+  watched: number;
+  scanned: number;
+  active: number;
+  active_margin_total: number;
+  best_margin: number;
+  seen_total: number;
+  seen_last_7_days: number;
+  margin_seen_last_7_days: number;
+  gone: number;
+  observing_since: number | null;
+  apify_runs_today: number;
+  apify_daily_cap: number;
+  ebay_configured: boolean;
+}
+
+export interface ResaleStatus {
+  running: boolean;
+  phase: string;
+  total: number;
+  done: number;
+  opportunities: number;
+  new_opportunities: number;
+  gone: number;
+  apify_runs: number;
+  errors: number;
+  last_error: string | null;
 }
 
 export interface UserSettings {

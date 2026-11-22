@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # Géocodage des villes (Nominatim/OpenStreetMap exige un User-Agent identifiant l'application)
     geocoder_user_agent: str = "WaxMatch/0.1 (projet personnel)"
 
+    # eBay (API officielle Browse) : developer.ebay.com -> Application Keys (Production)
+    ebay_client_id: str | None = None
+    ebay_client_secret: str | None = None
+
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None
     # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.

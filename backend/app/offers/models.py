@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Platform = Literal["vinted", "leboncoin", "2ememain", "discogs"]
+Platform = Literal["vinted", "leboncoin", "2ememain", "discogs", "ebay"]
 
 
 class Listing(BaseModel):
@@ -17,6 +17,7 @@ class Listing(BaseModel):
     currency: str = "EUR"
     price_type: str | None = None  # 2ememain : FIXED, MIN_BID (offre à partir de)…
     buyer_fee: float | None = None  # protection acheteur (Vinted, Leboncoin)
+    shipping_cost: float | None = None  # port réel quand la plateforme le donne (eBay)
     total_known: float | None = None  # prix + protection acheteur, HORS frais de port
     condition: str | None = None
     photo_url: str | None = None
