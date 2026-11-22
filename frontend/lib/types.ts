@@ -42,6 +42,7 @@ export interface Listing {
   seller_name: string | null;
   seller_is_pro: boolean | null;
   stock?: number | null;
+  shipping_cost?: number | null;
   score: number;
   delivered_total: number | null;
   delivery_mode: "main propre" | "envoi" | null;
@@ -122,6 +123,20 @@ export interface Opportunity {
   status: "active" | "disparue";
   first_seen: number;
   last_seen: number;
+  decision: "gardee" | "ecartee" | null;
+  decision_reason: string | null;
+  source: "disque" | "balayage";
+  buy_price: number | null;
+  buy_fee: number | null;
+  buy_shipping: number | null;
+  delivery_mode: string | null;
+  packaging: number;
+  comparables: { platform: string; title: string; url: string; price: number; condition: string | null }[];
+  vinted_median: number | null;
+  discogs_by_condition: Record<string, number>;
+  discogs_lowest: number | null;
+  discogs_for_sale: number | null;
+  discogs_url: string | null;
 }
 
 export interface WatchItem {
@@ -156,10 +171,17 @@ export interface ResaleSettings {
   exclude_lots: boolean;
   exclude_reissues: boolean;
   exclude_mixed: boolean;
+  sweep_queries: string[];
+  sweep_max_items: number;
+  verify_top: number;
 }
 
 export interface ResaleStats {
   watched: number;
+  to_review: number;
+  kept: number;
+  dismissed: number;
+  dismissed_reasons: Record<string, number>;
   scanned: number;
   active: number;
   active_margin_total: number;

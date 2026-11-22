@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.deps import get_spotify
 from app.resale.models import Opportunity, ResaleSettings, WatchItem
-from app.resale.service import ResaleContext, ResaleJob, run_resale_scan
+from pydantic import BaseModel
+
+from app.resale.service import ResaleContext, ResaleJob, run_resale_scan, run_sweep
 from app.resale.watchlist import build_watchlist
 from app.spotify.client import SpotifyClient
 
@@ -108,6 +110,36 @@ async def start_scan(
     return job.status()
 
 
+@router.post("/sweep")
+async def start_sweep(request: Request, spotify: SpotifyClient = Depends(get_spotify)):
+    """Balayage large : dernières annonces par style (peu de recherches), comparées à toute la liste."""
+    state = request.app.state
+    job: ResaleJob = state.resale_job
+    if job.running:
+        return job.status()
+    if not state.resale_store.watchlist:
+        raise HTTPException(status_code=409, detail="Liste de surveillance vide : construis-la d'abord")
+    ctx = await _context(request, spotify)
+    job.__init__()
+    job.running, job.phase = True, "préparation"
+    state.resale_task = asyncio.create_task(run_sweep(ctx, job))
+    return job.status()
+
+
+class DecisionInput(BaseModel):
+    decision: Literal["gardee", "ecartee"] | None
+    reason: str | None = None
+
+
+@router.post("/opportunities/{key}/decision", response_model=Opportunity)
+async def decide(key: str, body: DecisionInput, request: Request, spotify: SpotifyClient = Depends(get_spotify)):
+    """👍 garder, 👎 écarter (masquée et jamais reproposée), ou null pour annuler."""
+    opp = await request.app.state.resale_store.decide(key, body.decision, body.reason)
+    if opp is None:
+        raise HTTPException(status_code=404, detail="Opportunité introuvable")
+    return opp
+
+
 @router.get("/status")
 async def scan_status(request: Request):
     return request.app.state.resale_job.status()
@@ -116,15 +148,24 @@ async def scan_status(request: Request):
 @router.get("/opportunities", response_model=list[Opportunity])
 async def list_opportunities(
     request: Request,
-    status: Literal["active", "disparue", "toutes"] = "active",
+    view: Literal["a_trier", "gardees", "disparues", "ecartees", "toutes"] = "a_trier",
+    status: Literal["active", "disparue"] | None = Query(None, description="Ancien filtre (compatibilité)"),
     sort: Literal["margin", "roi", "recent", "demand"] = "margin",
     min_margin: float = 0,
     spotify: SpotifyClient = Depends(get_spotify),
 ):
-    opps = [
-        o for o in request.app.state.resale_store.opportunities.values()
-        if (status == "toutes" or o.status == status) and o.margin >= min_margin
-    ]
+    def visible(o: Opportunity) -> bool:
+        if status is not None:
+            return o.status == status and o.decision != "ecartee"
+        return {
+            "a_trier": o.decision is None and o.status == "active",
+            "gardees": o.decision == "gardee",
+            "disparues": o.decision is None and o.status == "disparue",
+            "ecartees": o.decision == "ecartee",
+            "toutes": True,
+        }[view]
+
+    opps = [o for o in request.app.state.resale_store.opportunities.values() if visible(o) and o.margin >= min_margin]
     key = {"margin": lambda o: o.margin, "roi": lambda o: o.roi, "recent": lambda o: o.first_seen,
            "demand": lambda o: o.demand}[sort]
     return sorted(opps, key=key, reverse=True)
@@ -135,11 +176,19 @@ async def stats(request: Request, spotify: SpotifyClient = Depends(get_spotify))
     """Journal d'observation : mesurer la rentabilité potentielle avant d'acheter."""
     store = request.app.state.resale_store
     opps = list(store.opportunities.values())
-    active = [o for o in opps if o.status == "active"]
+    active = [o for o in opps if o.status == "active" and o.decision != "ecartee"]
     gone = [o for o in opps if o.status == "disparue"]
+    dismissed = [o for o in opps if o.decision == "ecartee"]
+    reasons: dict[str, int] = {}
+    for o in dismissed:
+        reasons[o.decision_reason or "sans raison"] = reasons.get(o.decision_reason or "sans raison", 0) + 1
     week_ago = time.time() - 7 * 24 * 3600
     return {
         "watched": len(store.watchlist),
+        "to_review": sum(1 for o in active if o.decision is None),
+        "kept": sum(1 for o in opps if o.decision == "gardee"),
+        "dismissed": len(dismissed),
+        "dismissed_reasons": reasons,
         "scanned": sum(1 for i in store.watchlist.values() if i.last_scanned),
         "active": len(active),
         "active_margin_total": round(sum(o.margin for o in active), 2),

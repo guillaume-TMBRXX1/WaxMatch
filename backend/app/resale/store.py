@@ -75,13 +75,30 @@ class ResaleStore:
     async def upsert_opportunity(self, opp: Opportunity) -> bool:
         """Enregistre ou met à jour ; renvoie True si l'opportunité est nouvelle."""
         previous = self.opportunities.get(opp.key)
-        is_new = previous is None or previous.status == "disparue"
-        if previous is not None and not is_new:
+        if previous is not None:
+            # La décision de l'utilisateur est conservée : une offre écartée n'est jamais reproposée.
+            opp.decision, opp.decision_reason, opp.decided_at = previous.decision, previous.decision_reason, previous.decided_at
+        is_new = (previous is None or previous.status == "disparue") and opp.decision != "ecartee"
+        if previous is not None and previous.status == "active":
             opp.first_seen = previous.first_seen
         opp.last_seen, opp.status = time.time(), "active"
         self.opportunities[opp.key] = opp
         await self._save_opportunity(opp)
         return is_new
+
+    async def decide(self, key: str, decision: str | None, reason: str | None = None) -> Opportunity | None:
+        opp = self.opportunities.get(key)
+        if opp is None:
+            return None
+        opp.decision, opp.decision_reason = decision, reason if decision == "ecartee" else None
+        opp.decided_at = time.time() if decision else None
+        await self._save_opportunity(opp)
+        return opp
+
+    async def remove(self, key: str) -> None:
+        self.opportunities.pop(key, None)
+        if self.pool is not None:
+            await self.pool.execute("delete from resale_opportunities where key = $1", key)
 
     async def mark_gone(self, watch_key: str, seen: set[str]) -> int:
         gone = 0

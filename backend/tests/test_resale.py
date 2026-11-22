@@ -179,3 +179,88 @@ def test_daily_apify_cap_keeps_ebay_only():
         assert world.apify_calls == 0 and status["apify_runs"] == 0
         # Sans comparables Vinted, la cote Discogs seule sert de référence : l'opportunité eBay est trouvée.
         assert status["new_opportunities"] == 1
+
+
+def test_opportunity_details_and_triage():
+    world = FakeWorld()
+    with TestClient(_app(world), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        client.post("/resale/scan")
+        _wait(client)
+        opp = client.get("/resale/opportunities").json()[0]
+        # Détail du calcul : achat, comparables Vinted et médiane, cote Discogs, lien Discogs.
+        assert (opp["buy_price"], opp["buy_shipping"], opp["packaging"]) == (12.0, 6.5, 1.5)
+        assert [c["price"] for c in opp["comparables"]] == [38, 40, 42] and opp["vinted_median"] == 40
+        assert opp["discogs_by_condition"]["VG+"] == 45.0 and opp["discogs_lowest"] == 20.0
+        assert opp["discogs_url"].endswith("master_id=500&format=Vinyl")
+
+        key = opp["key"]
+        client.post(f"/resale/opportunities/{key}/decision", json={"decision": "gardee"})
+        assert client.get("/resale/opportunities").json() == []  # plus « à trier »
+        assert client.get("/resale/opportunities", params={"view": "gardees"}).json()[0]["key"] == key
+
+        client.post(f"/resale/opportunities/{key}/decision", json={"decision": "ecartee", "reason": "revente surestimée"})
+        assert client.get("/resale/opportunities", params={"view": "ecartees"}).json()[0]["decision_reason"] == "revente surestimée"
+        # Retrouvée lors d'une nouvelle analyse : reste écartée, pas reproposée ni comptée comme nouvelle.
+        client.app.state.offers_store.searches.clear()
+        client.post("/resale/scan")
+        assert _wait(client)["new_opportunities"] == 0
+        assert client.get("/resale/opportunities").json() == []
+        stats = client.get("/resale/stats").json()
+        assert stats["dismissed"] == 1 and stats["dismissed_reasons"] == {"revente surestimée": 1}
+        assert client.post("/resale/opportunities/inconnue/decision", json={"decision": "gardee"}).status_code == 404
+
+
+def test_sweep_matches_many_listings_with_few_searches():
+    world = FakeWorld()
+    world.ebay_items = []
+
+    def sweep_vinted(request):
+        body = json.loads(request.content)
+        query = body.get("searchQueries", [body.get("searchQuery")])[0]
+        if "vinyle soul" in query and "vinted" in request.url.path:
+            return httpx.Response(201, json=[
+                # Bonne affaire : The Payback à 9 €, état « Très bon état ».
+                {"id": 900, "title": "James Brown The Payback vinyle 1973", "url": "https://v/900", "price": 9,
+                 "totalPrice": 10.1, "currency": "EUR", "condition": "Très bon état", "photos": []},
+                # Sans rapport avec la liste : ignorée.
+                {"id": 901, "title": "Vinyle Johnny Hallyday", "url": "https://v/901", "price": 5, "totalPrice": 6,
+                 "currency": "EUR", "condition": "Bon état", "photos": []},
+                # Goodie : exclu.
+                {"id": 902, "title": "T-shirt James Brown The Payback", "url": "https://v/902", "price": 3,
+                 "totalPrice": 4, "currency": "EUR", "condition": "Neuf", "photos": []},
+            ])
+        return None
+
+    original = world.__call__
+
+    def handler(request):
+        if request.url.host == "api.apify.com":
+            world.apify_calls += 1
+            body = json.loads(request.content)
+            # Recherche « disque par disque » de vérification : comparables Vinted.
+            if body.get("searchQueries") == ["James Brown The Payback vinyle"]:
+                return httpx.Response(201, json=[
+                    {"id": 70 + i, "title": "James Brown The Payback vinyle", "url": f"https://v/{70 + i}",
+                     "price": p, "totalPrice": p + 2, "currency": "EUR", "condition": "Bon état", "photos": []}
+                    for i, p in enumerate([40, 38, 42])
+                ])
+            return sweep_vinted(request) or httpx.Response(201, json=[])
+        return original(request)
+
+    with TestClient(_app(handler), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul", "vinyle funk"]})
+        client.post("/resale/sweep")
+        status = _wait(client)
+        # 2 requêtes × 2 plateformes pour le balayage + 1 vérification.
+        assert status["apify_runs"] == 5 and status["new_opportunities"] == 1
+        opp = client.get("/resale/opportunities").json()[0]
+        assert opp["source"] == "balayage" and opp["listing"]["external_id"] == "900"
+        assert opp["vinted_median"] == 40 and len(opp["comparables"]) == 3  # vérifiée avec des comparables
+        assert opp["buy_total"] == 15.1  # 10,10 € (protection incluse) + 5 € de port estimé
