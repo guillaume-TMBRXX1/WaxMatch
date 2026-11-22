@@ -25,6 +25,12 @@ class ResaleSettings(BaseModel):
         default_factory=lambda: ["ebay", "vinted", "2ememain"]
     )
     daily_apify_runs: int = Field(30, ge=0, le=1000, description="Plafond journalier de recherches Apify")
+    min_grade: Literal["G+", "VG", "VG+", "NM"] = Field("VG", description="État minimum, défauts compris")
+    require_confirmed_vinyl: bool = Field(True, description="Exiger une preuve que c'est un vinyle")
+    allow_no_sleeve: bool = Field(False, description="Accepter les disques sans pochette")
+    exclude_lots: bool = Field(False, description="Écarter les lots (valeur par disque difficile à estimer)")
+    exclude_reissues: bool = Field(False, description="Écarter les rééditions")
+    exclude_mixed: bool = Field(True, description="Écarter les annonces mixtes (vinyle + CD, goodies…)")
 
 
 class WatchItem(BaseModel):

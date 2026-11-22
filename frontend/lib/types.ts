@@ -150,6 +150,12 @@ export interface ResaleSettings {
   discogs_to_vinted: number;
   platforms: ("vinted" | "2ememain" | "ebay" | "leboncoin")[];
   daily_apify_runs: number;
+  min_grade: "G+" | "VG" | "VG+" | "NM";
+  require_confirmed_vinyl: boolean;
+  allow_no_sleeve: boolean;
+  exclude_lots: boolean;
+  exclude_reissues: boolean;
+  exclude_mixed: boolean;
 }
 
 export interface ResaleStats {
@@ -179,6 +185,8 @@ export interface ResaleStatus {
   apify_runs: number;
   errors: number;
   last_error: string | null;
+  filtered?: Record<string, number>;
+  filtered_total?: number;
 }
 
 export interface UserSettings {

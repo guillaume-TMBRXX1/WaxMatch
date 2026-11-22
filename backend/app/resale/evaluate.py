@@ -26,7 +26,7 @@ def resale_estimate(
     Prudent : on retient le plus bas entre les prix affichés sur Vinted pour ce disque (au moins
     3 annonces comparables, décotés) et la cote Discogs de l'état, convertie en prix Vinted.
     """
-    grade = condition_grade(listing.condition, listing.title)
+    grade = listing.grade or condition_grade(listing.condition, listing.title)  # état réel (défauts compris)
     candidates: list[tuple[float, str]] = []
     if len(vinted_prices) >= 3:
         value = median(vinted_prices) * settings.vinted_discount
@@ -47,8 +47,10 @@ def risks_for(listing: ScoredListing) -> list[str]:
     risks = []
     if not listing.condition:
         risks.append("État non précisé : vérifier les photos")
-    if "lot" in title.split():
+    if "lot" in title.split() or "lots" in title.split():
         risks.append("Lot : identifier chaque disque")
+    if getattr(listing, "defects", None):
+        risks.append("Défaut signalé : " + ", ".join(listing.defects))
     if listing.price_type == "MIN_BID":
         risks.append("Prix « à partir de » : à négocier")
     if any(w in title for w in ("reissue", "réédition", "reedition", "repress", " re ")):

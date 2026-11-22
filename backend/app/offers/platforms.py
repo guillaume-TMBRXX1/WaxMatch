@@ -132,6 +132,10 @@ def parse_2ememain(item: dict) -> Listing | None:
     )
 
 
+# Catégorie(s) « Vinyles » de Vinted (numéro visible dans l'adresse du catalogue : catalog[]=…).
+# Renseignée au démarrage depuis la configuration ; vide = recherche dans tout Vinted.
+VINTED_CATALOG_IDS: list[int] = []
+
 VINTED_DOMAINS = {"BE": "vinted.be", "FR": "vinted.fr", "LU": "vinted.lu", "NL": "vinted.nl", "ES": "vinted.es"}
 
 
@@ -151,6 +155,7 @@ PLATFORMS: dict[str, PlatformConfig] = {
             "maxItems": n,
             "includeSellerDetails": False,
             "order": "newest_first",
+            **({"catalogIds": VINTED_CATALOG_IDS} if VINTED_CATALOG_IDS else {}),
             "proxyConfiguration": PROXY,
         },
         parse=parse_vinted,

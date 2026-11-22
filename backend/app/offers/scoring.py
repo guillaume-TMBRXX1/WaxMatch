@@ -8,6 +8,10 @@ from statistics import median
 from app.discogs.models import AlbumOffers
 from app.geo import haversine_km
 from app.offers.ebay import EU as EBAY_EU
+from app.offers.quality import assess_quality
+from app.offers.scoring_grades import GRADE_FALLBACK, GRADE_ORDER, condition_grade, downgrade  # noqa: F401
+
+GRADE_SCORE = {"M": 100.0, "NM": 95.0, "VG+": 85.0, "VG": 70.0, "G+": 45.0, "G": 25.0, "P": 10.0}
 from app.offers.models import Listing, ScoredListing
 from app.spotify.normalize import fold
 from app.user_settings import UserSettings
@@ -32,26 +36,6 @@ def discogs_reference_price(offers: AlbumOffers | None) -> float | None:
     if not prices:
         return None
     return round(median(prices) + DISCOGS_SHIPPING_ESTIMATE, 2)
-
-
-# État de l'annonce -> échelle Discogs (Goldmine). Inconnu : VG, hypothèse prudente pour de l'occasion.
-_GRADES = [
-    (re.compile(r"blister|scell|sealed|sous cello"), "M"),
-    (re.compile(r"neuf|new|mint"), "NM"),
-    (re.compile(r"tres bon|excellent|comme neuf|nickel|very good|like new|vg\b ?\+|\bvg\+"), "VG+"),
-    (re.compile(r"bon etat|\bbon\b|good"), "VG"),
-    (re.compile(r"satisfaisant|correct|usage|use|abime"), "G+"),
-]
-GRADE_FALLBACK = {"M": ["M", "NM"], "NM": ["NM", "M", "VG+"], "VG+": ["VG+", "VG"], "VG": ["VG", "VG+"],
-                  "G+": ["G+", "G", "VG"]}
-
-
-def condition_grade(condition: str | None, title: str) -> str:
-    text = fold(f"{condition or ''} {title}")
-    for pattern, grade in _GRADES:
-        if pattern.search(text):
-            return grade
-    return "VG"
 
 
 def graded_reference(grade: str, suggestions: dict[str, float] | None) -> float | None:
@@ -188,8 +172,14 @@ def score_listings(
     weights = settings.weights
     radius = max(settings.pickup_radius_km, 1)
     for c in candidates:
+        # État réel : état déclaré, corrigé des défauts repérés dans l'annonce (rayures, pochette…).
+        quality = assess_quality(c)
+        c.grade = quality.grade
+        c.vinyl_confirmed = quality.confirmed
+        c.defects = quality.severe + quality.mild
+        c.no_sleeve = quality.no_sleeve
+        c.notes.extend(quality.notes)
         # Référence propre à l'état de l'annonce (prix conseillé Discogs), sinon référence générale.
-        c.grade = condition_grade(c.condition, c.title)
         graded = graded_reference(c.grade, price_suggestions)
         c.reference = graded or discogs_reference
         if c.pickup_possible:
@@ -205,7 +195,7 @@ def score_listings(
             "price": round(100 * best_price / c.delivered_total, 1) if c.delivered_total else 0.0,
             "deal": round(deal_score(c.delivered_total, c.reference), 1),
             "proximity": round(proximity, 1),
-            "trust": round((condition_score(c.condition, c.title) + seller) / 2, 1),
+            "trust": round((GRADE_SCORE.get(c.grade, 60.0) + seller) / 2, 1),
             # Vinted : les anciens résultats en cache portaient la date de collecte, pas de publication.
             "freshness": freshness_score(None if c.platform == "vinted" else parse_date(c.published_at, now), now),
         }

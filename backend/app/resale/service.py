@@ -11,6 +11,7 @@ from app.geo import Geocoder
 from app.offers.apify import ApifyClient
 from app.offers.ebay import EbayClient
 from app.offers.service import OffersStore, album_listings
+from app.offers.quality import assess_quality, grade_at_least
 from app.resale.evaluate import resale_estimate, risks_for
 from app.resale.models import Opportunity, WatchItem
 from app.resale.store import ResaleStore
@@ -49,10 +50,12 @@ class ResaleJob:
     started_at: float | None = None
     finished_at: float | None = None
     new_keys: list[str] = field(default_factory=list)
+    filtered: dict[str, int] = field(default_factory=dict)  # annonces écartées, par raison
 
     def status(self) -> dict:
         data = asdict(self)
         data.pop("new_keys")
+        data["filtered_total"] = sum(self.filtered.values())
         return data
 
 
@@ -122,6 +125,10 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
     for listing in result.listings:
         if listing.delivered_total is None:
             continue
+        reason = quality_rejection(listing, rs)
+        if reason:
+            job.filtered[reason] = job.filtered.get(reason, 0) + 1
+            continue
         comparables = [p for ext, p in vinted if ext != listing.external_id]
         value, basis, grade = resale_estimate(listing, suggestions, comparables, rs)
         if value is None:
@@ -130,7 +137,11 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
         margin = round(value - buy - rs.packaging, 2)
         roi = round(margin / buy, 2) if buy else 0.0
         if margin < rs.min_margin or roi < rs.min_roi or buy > rs.max_buy:
+            job.filtered["marge insuffisante"] = job.filtered.get("marge insuffisante", 0) + 1
             continue
+        risks = risks_for(listing)
+        if roi >= 3:
+            risks.append("Prix anormalement bas : arnaque, erreur ou mauvaise identification ? Vérifier")
         opp = Opportunity(
             key=f"{listing.platform}:{listing.external_id}",
             watch_key=item.key,
@@ -145,7 +156,7 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
             margin=margin,
             roi=roi,
             demand=item.demand,
-            risks=risks_for(listing),
+            risks=risks,
         )
         seen.add(opp.key)
         job.opportunities += 1
@@ -153,6 +164,28 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
             job.new_opportunities += 1
             job.new_keys.append(opp.key)
     job.gone += await ctx.resale.mark_gone(item.key, seen)
+
+
+def quality_rejection(listing, rs) -> str | None:
+    """Raison d'écarter l'annonce selon les réglages de revente (None = on garde)."""
+    q = assess_quality(listing)
+    if q.blocking:
+        return "pas un vinyle"
+    if rs.require_confirmed_vinyl and not q.confirmed:
+        return "vinyle non confirmé"
+    if q.severe:
+        return "défaut grave"
+    if q.no_sleeve and not rs.allow_no_sleeve:
+        return "sans pochette"
+    if not grade_at_least(q.grade, rs.min_grade):
+        return "état insuffisant"
+    if q.is_lot and rs.exclude_lots:
+        return "lot"
+    if q.mixed_media and rs.exclude_mixed:
+        return "annonce mixte"
+    if rs.exclude_reissues and any("Réédition" in r for r in risks_for(listing)):
+        return "réédition"
+    return None
 
 
 async def run_resale_scan(ctx: ResaleContext, job: ResaleJob, limit: int) -> None:

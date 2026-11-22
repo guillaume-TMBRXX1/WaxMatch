@@ -18,6 +18,7 @@ class Listing(BaseModel):
     price_type: str | None = None  # 2ememain : FIXED, MIN_BID (offre à partir de)…
     buyer_fee: float | None = None  # protection acheteur (Vinted, Leboncoin)
     shipping_cost: float | None = None  # port réel quand la plateforme le donne (eBay)
+    vinyl_source: bool = False  # recherche limitée à la catégorie vinyles de la plateforme
     total_known: float | None = None  # prix + protection acheteur, HORS frais de port
     condition: str | None = None
     photo_url: str | None = None
@@ -65,7 +66,10 @@ class ScoredListing(Listing):
     distance_km: float | None = None
     pickup_possible: bool = False
     components: dict[str, float] = {}  # détail du score par critère
-    grade: str | None = None  # état estimé, sur l'échelle Discogs (NM, VG+, VG…)
+    grade: str | None = None  # état estimé, sur l'échelle Discogs (NM, VG+, VG…), défauts compris
+    vinyl_confirmed: bool = True  # preuve qu'il s'agit d'un vinyle (titre, catégorie)
+    defects: list[str] = []  # défauts détectés dans l'annonce
+    no_sleeve: bool = False
     reference: float | None = None  # prix Discogs de comparaison pour CET état, port compris
     notes: list[str] = []
     also_on: list[str] = []  # même annonce repérée sur une autre plateforme (liens)
