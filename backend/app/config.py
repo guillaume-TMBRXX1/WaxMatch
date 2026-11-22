@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     apify_token: str | None = None
     apify_max_items: int = 20  # annonces max par recherche et par plateforme (le coût en dépend)
     offers_cache_hours: float = 24
-    vinted_catalog_ids: list[int] = []  # VINTED_CATALOG_IDS=[1234] : limite Vinted à la catégorie vinyles
+    # Catégorie « Vinyles » de Vinted (vinted.be/catalog/3041-vinyl-records) : seuls les disques sont cherchés.
+    vinted_catalog_ids: list[int] = [3041]
     apify_concurrency: int = 1  # albums analysés en même temps lors d'un scan (2 runs Apify par album)
 
     # Géocodage des villes (Nominatim/OpenStreetMap exige un User-Agent identifiant l'application)

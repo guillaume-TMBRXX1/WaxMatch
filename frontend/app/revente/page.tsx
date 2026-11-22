@@ -6,10 +6,11 @@ import { api, ApiError, useApi } from "@/lib/api";
 import { formatPrice, PLATFORM_LABEL } from "@/lib/format";
 import type { Opportunity, ResaleSettings, ResaleStats, ResaleStatus, WatchItem } from "@/lib/types";
 
-const STATUSES = [
-  { value: "active", label: "Actives" },
-  { value: "disparue", label: "Disparues" },
-  { value: "toutes", label: "Toutes" },
+const VIEWS = [
+  { value: "a_trier", label: "À trier" },
+  { value: "gardees", label: "Gardées" },
+  { value: "disparues", label: "Disparues" },
+  { value: "ecartees", label: "Écartées" },
 ] as const;
 const SORTS = [
   { value: "margin", label: "Marge" },
@@ -23,11 +24,89 @@ function days(ts: number | null) {
   return Math.max(1, Math.round((Date.now() / 1000 - ts) / 86400));
 }
 
-function OpportunityCard({ opp }: { opp: Opportunity }) {
+const REASONS = ["Pas un vinyle", "Mauvais état", "Revente surestimée", "Trop loin / port trop cher", "Autre"];
+
+function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: strong ? 800 : 500 }}>
+      <span style={{ color: strong ? "var(--ink)" : "var(--ink-2)" }}>{label}</span>
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    </div>
+  );
+}
+
+function OpportunityDetails({ opp }: { opp: Opportunity }) {
+  const l = opp.listing;
+  const search = encodeURIComponent(`${opp.artist} ${opp.title}`);
+  return (
+    <div className="stack" style={{ gap: 14, marginTop: 12 }}>
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+        <div className="panel stack" style={{ gap: 6 }}>
+          <span className="label">Achat</span>
+          <Row label="Prix affiché" value={formatPrice(opp.buy_price)} />
+          {(opp.buy_fee ?? 0) > 0 && <Row label="Protection acheteur" value={formatPrice(opp.buy_fee)} />}
+          <Row
+            label={opp.delivery_mode === "main propre" ? "Main propre" : `Port ${l.shipping_cost != null ? "(vendeur)" : "(estimé)"}`}
+            value={formatPrice(opp.buy_shipping ?? 0)}
+          />
+          <Row label="Total achat" value={formatPrice(opp.buy_total)} strong />
+        </div>
+        <div className="panel stack" style={{ gap: 6 }}>
+          <span className="label">Revente estimée sur Vinted</span>
+          <Row label="Prix de revente retenu" value={formatPrice(opp.resale_estimate)} strong />
+          <span style={{ color: "var(--ink-2)", fontSize: 12.5 }}>Base : {opp.resale_basis}</span>
+          {opp.vinted_median != null && <Row label={`Médiane Vinted (${opp.comparables.length} annonces)`} value={formatPrice(opp.vinted_median)} />}
+          <Row label="− Total achat" value={formatPrice(opp.buy_total)} />
+          <Row label="− Emballage" value={formatPrice(opp.packaging)} />
+          <Row label="Marge nette" value={`+${formatPrice(opp.margin)}`} strong />
+        </div>
+        <div className="panel stack" style={{ gap: 6 }}>
+          <span className="label">Discogs</span>
+          {Object.entries(opp.discogs_by_condition).map(([g, v]) => (
+            <Row key={g} label={`Cote ${g}${g === opp.grade ? " (cet état)" : ""}`} value={formatPrice(v)} strong={g === opp.grade} />
+          ))}
+          {opp.discogs_lowest != null && (
+            <Row label={`Le moins cher (${opp.discogs_for_sale ?? "?"} en vente)`} value={`${formatPrice(opp.discogs_lowest)} + port`} />
+          )}
+        </div>
+      </div>
+
+      {opp.comparables.length > 0 && (
+        <div className="panel">
+          <span className="label">Annonces Vinted comparables (même disque)</span>
+          <div className="stack" style={{ gap: 6, marginTop: 8 }}>
+            {opp.comparables.map((c) => (
+              <a key={c.url} href={c.url} target="_blank" rel="noopener noreferrer"
+                 style={{ display: "flex", justifyContent: "space-between", gap: 12, textDecoration: "none" }}>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.title}
+                  {c.condition ? <span style={{ color: "var(--ink-3)" }}> · {c.condition}</span> : null}
+                </span>
+                <strong style={{ fontVariantNumeric: "tabular-nums" }}>{formatPrice(c.price)}</strong>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="cluster">
+        <span className="label">Comparer ailleurs :</span>
+        {opp.discogs_url && <a className="btn-secondary" href={opp.discogs_url} target="_blank" rel="noopener noreferrer">Discogs (vinyles en vente)</a>}
+        <a className="btn-secondary" href={`https://www.vinted.be/catalog?search_text=${search}&catalog[]=3041`} target="_blank" rel="noopener noreferrer">Vinted</a>
+        <a className="btn-secondary" href={`https://www.popsike.com/php/quicksearch.php?searchtext=${search}`} target="_blank" rel="noopener noreferrer">Popsike</a>
+        <a className="btn-secondary" href={`https://www.ebay.fr/sch/i.html?_nkw=${search}+vinyl&LH_Sold=1&LH_Complete=1`} target="_blank" rel="noopener noreferrer">eBay (vendus)</a>
+      </div>
+    </div>
+  );
+}
+
+function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decision: "gardee" | "ecartee" | null, reason?: string) => void }) {
   const l = opp.listing;
   const gone = opp.status === "disparue";
+  const [open, setOpen] = useState(false);
+  const [askReason, setAskReason] = useState(false);
   return (
-    <article className={`card${!gone && opp.roi >= 1 ? " hot" : ""}`} style={{ opacity: gone ? 0.7 : 1 }}>
+    <article className={`card${!gone && opp.roi >= 1 ? " hot" : ""}`} style={{ opacity: gone || opp.decision === "ecartee" ? 0.7 : 1 }}>
       <div className="deal-row">
         {opp.cover_url || l.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -38,44 +117,62 @@ function OpportunityCard({ opp }: { opp: Opportunity }) {
         <div style={{ minWidth: 0 }}>
           <div className="cluster" style={{ marginBottom: 6 }}>
             {gone ? <span className="badge-live">Disparue · vendue ?</span> : opp.roi >= 1 && <span className="badge-live">×2</span>}
+            {opp.decision === "gardee" && <span className="pill premium">Gardée</span>}
             <span className="pill">{PLATFORM_LABEL[l.platform]}</span>
             <span className="pill">≈ {opp.grade}</span>
             {l.delivery_mode && (
               <span className="pill">{l.delivery_mode === "main propre" ? `Main propre · ${l.distance_km} km` : "Envoi"}</span>
             )}
           </div>
-          <div className="album-title" style={{ fontSize: 22 }}>
-            {opp.title}
-          </div>
+          <div className="album-title" style={{ fontSize: 22 }}>{opp.title}</div>
           <div className="album-artist">{opp.artist}</div>
-          <div className="album-artist" style={{ marginTop: 4 }}>
-            {l.title}
-          </div>
+          <div className="album-artist" style={{ marginTop: 4 }}>{l.title}</div>
           <ul className="notes">
-            <li>
-              Achat {formatPrice(opp.buy_total)} → revente ~{formatPrice(opp.resale_estimate)}
-            </li>
-            <li title={opp.resale_basis}>Base : {opp.resale_basis}</li>
+            <li>Achat {formatPrice(opp.buy_total)} → revente ~{formatPrice(opp.resale_estimate)}</li>
+            {opp.vinted_median != null && <li>Médiane Vinted {formatPrice(opp.vinted_median)}</li>}
             {opp.risks.map((r) => (
-              <li key={r} style={{ color: "var(--ochre)" }}>
-                ⚠ {r}
-              </li>
+              <li key={r} style={{ color: "var(--ochre)" }}>⚠ {r}</li>
             ))}
           </ul>
         </div>
         <div className="deal-price">
           <div className="label">Marge nette</div>
-          <div className="figure" style={{ fontSize: 44 }}>
-            +{formatPrice(opp.margin)}
-          </div>
-          <div className="label" style={{ marginTop: 6 }}>
-            Rendement +{Math.round(opp.roi * 100)} %
-          </div>
+          <div className="figure" style={{ fontSize: 44 }}>+{formatPrice(opp.margin)}</div>
+          <div className="label" style={{ marginTop: 6 }}>Rendement +{Math.round(opp.roi * 100)} %</div>
           <a className="btn-secondary" href={l.url} target="_blank" rel="noopener noreferrer" style={{ marginTop: 12 }}>
             Ouvrir l&apos;annonce
           </a>
         </div>
       </div>
+
+      <div className="cluster" style={{ justifyContent: "space-between", marginTop: 12 }}>
+        <button type="button" className="btn-secondary" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Masquer le détail" : "Détail du calcul et comparaisons"}
+        </button>
+        <div className="cluster">
+          {opp.decision ? (
+            <button type="button" className="btn-secondary" onClick={() => onDecide(null)}>Annuler mon choix</button>
+          ) : askReason ? (
+            <>
+              <span className="label">Pourquoi ?</span>
+              {REASONS.map((r) => (
+                <button key={r} type="button" className="pill" onClick={() => onDecide("ecartee", r)}>{r}</button>
+              ))}
+              <button type="button" className="btn-secondary" onClick={() => setAskReason(false)}>Annuler</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn-secondary" onClick={() => onDecide("gardee")} title="Intéressante : la garder">
+                👍 Garder
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setAskReason(true)} title="Pas bonne : l'écarter">
+                👎 Écarter
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {open && <OpportunityDetails opp={opp} />}
     </article>
   );
 }
@@ -196,13 +293,13 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
 }
 
 export default function ResalePage() {
-  const [status, setStatusFilter] = useState<(typeof STATUSES)[number]["value"]>("active");
+  const [view, setView] = useState<(typeof VIEWS)[number]["value"]>("a_trier");
   const [sort, setSort] = useState<(typeof SORTS)[number]["value"]>("margin");
   const [limit, setLimit] = useState(10);
   const [job, setJob] = useState<ResaleStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stats = useApi<ResaleStats>("/resale/stats");
-  const opps = useApi<Opportunity[]>(`/resale/opportunities?status=${status}&sort=${sort}`);
+  const opps = useApi<Opportunity[]>(`/resale/opportunities?view=${view}&sort=${sort}`);
   const watch = useApi<WatchItem[]>("/resale/watchlist?limit=24");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -241,6 +338,18 @@ export default function ResalePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function decide(key: string, decision: "gardee" | "ecartee" | null, reason?: string) {
+    try {
+      await api(`/resale/opportunities/${encodeURIComponent(key)}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision, reason: reason ?? null }),
+      });
+    } finally {
+      opps.reload();
+      stats.reload();
+    }
+  }
+
   async function launch(path: string) {
     setError(null);
     try {
@@ -276,8 +385,9 @@ export default function ResalePage() {
           <span className="label">{s ? `${s.scanned} analysés` : ""}</span>
         </div>
         <div className="panel kpi">
-          <span className="label">Opportunités actives</span>
-          <div className="figure">{s ? s.active : "—"}</div>
+          <span className="label">À trier</span>
+          <div className="figure">{s ? s.to_review : "—"}</div>
+          <span className="label">{s ? `${s.kept} gardées · ${s.dismissed} écartées` : ""}</span>
         </div>
         <div className="panel kpi">
           <span className="label">Marge potentielle</span>
@@ -332,8 +442,12 @@ export default function ResalePage() {
                     ))}
                   </select>
                 </label>
-                <button type="button" className="btn" disabled={running} onClick={() => launch(`/resale/scan?limit=${limit}`)}>
-                  {running ? "Analyse…" : "Analyser"}
+                <button type="button" className="btn" disabled={running} onClick={() => launch("/resale/sweep")}
+                        title="Dernières annonces funk/soul de Vinted et 2ememain, comparées à toute la liste">
+                  {running ? "Analyse…" : "Balayage large"}
+                </button>
+                <button type="button" className="btn-secondary" disabled={running} onClick={() => launch(`/resale/scan?limit=${limit}`)}>
+                  Disque par disque
                 </button>
                 <button type="button" className="btn-secondary" disabled={running} onClick={() => launch("/resale/watchlist/build")}>
                   Reconstruire la liste
@@ -369,10 +483,11 @@ export default function ResalePage() {
       </div>
 
       <div className="cluster" style={{ justifyContent: "space-between", marginBottom: 16 }}>
-        <div className="segmented" role="group" aria-label="Statut">
-          {STATUSES.map((x) => (
-            <button key={x.value} type="button" aria-pressed={status === x.value} onClick={() => setStatusFilter(x.value)}>
+        <div className="segmented" role="group" aria-label="Liste">
+          {VIEWS.map((x) => (
+            <button key={x.value} type="button" aria-pressed={view === x.value} onClick={() => setView(x.value)}>
               {x.label}
+              {x.value === "a_trier" && s ? ` · ${s.to_review}` : x.value === "gardees" && s ? ` · ${s.kept}` : ""}
             </button>
           ))}
         </div>
@@ -396,7 +511,7 @@ export default function ResalePage() {
       ) : (
         <div className="stack">
           {opps.data!.map((o) => (
-            <OpportunityCard key={o.key} opp={o} />
+            <OpportunityCard key={o.key} opp={o} onDecide={(decision, reason) => decide(o.key, decision, reason)} />
           ))}
         </div>
       )}

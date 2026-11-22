@@ -97,7 +97,8 @@ def assess_quality(listing: Listing) -> Quality:
     category_confirmed = bool(listing.vinyl_source) or (
         listing.platform == "2ememain" and re.search(r"2ememain\.be/v/[^/]+/vinyl", listing.url or "")
     )
-    evidence = bool(VINYL_EVIDENCE.search(text)) or bool(category_confirmed)
+    title_evidence = bool(VINYL_EVIDENCE.search(text))
+    evidence = title_evidence or bool(category_confirmed)
     q = Quality(confirmed=evidence)
 
     if SLEEVE_ONLY.search(text):
@@ -105,7 +106,9 @@ def assess_quality(listing: Listing) -> Quality:
         return q
     other = OTHER_MEDIA.search(text)
     merch = MERCH.search(text)
-    if not evidence and (other or merch):
+    # Sans mention de vinyle dans le titre, un CD ou un goodie reste exclu, même rangé dans une catégorie
+    # « vinyles » (erreur de classement fréquente chez les vendeurs).
+    if not title_evidence and (other or merch):
         q.blocking = f"pas un vinyle (« {(other or merch).group(0)} »)"
         return q
     if evidence and (other or merch):

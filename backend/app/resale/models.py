@@ -14,7 +14,7 @@ class ResaleSettings(BaseModel):
     genre: str = "Funk / Soul"
     styles: list[str] = Field(default_factory=lambda: list(FUNK_SOUL_STYLES))
     extra_genres: list[str] = Field(default_factory=lambda: ["Jazz", "Rock"], description="Genres secondaires")
-    watchlist_size: int = Field(300, ge=20, le=2000)
+    watchlist_size: int = Field(600, ge=20, le=3000)
     min_margin: float = Field(8.0, ge=0, description="Marge nette minimum, en euros")
     min_roi: float = Field(0.3, ge=0, description="Rendement minimum : 0,3 = +30 % sur le prix d'achat")
     max_buy: float = Field(80.0, gt=0, description="Prix d'achat livré maximum")
@@ -31,6 +31,13 @@ class ResaleSettings(BaseModel):
     exclude_lots: bool = Field(False, description="Écarter les lots (valeur par disque difficile à estimer)")
     exclude_reissues: bool = Field(False, description="Écarter les rééditions")
     exclude_mixed: bool = Field(True, description="Écarter les annonces mixtes (vinyle + CD, goodies…)")
+    # Balayage large : quelques recherches par style, dont les annonces sont comparées à toute la liste.
+    sweep_queries: list[str] = Field(
+        default_factory=lambda: ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro", "vinyle jazz funk",
+                                 "vinyle rnb"]
+    )
+    sweep_max_items: int = Field(100, ge=10, le=500, description="Annonces récupérées par recherche de balayage")
+    verify_top: int = Field(5, ge=0, le=50, description="Opportunités vérifiées ensuite avec des annonces comparables")
 
 
 class WatchItem(BaseModel):
@@ -46,6 +53,16 @@ class WatchItem(BaseModel):
     have: int = 0
     demand: float = 0  # score de demande (want, rareté)
     last_scanned: float | None = None
+
+
+class Comparable(BaseModel):
+    """Annonce comparable du même disque, qui sert à estimer le prix de revente."""
+
+    platform: str
+    title: str
+    url: str
+    price: float
+    condition: str | None = None
 
 
 class Opportunity(BaseModel):
@@ -64,5 +81,22 @@ class Opportunity(BaseModel):
     demand: float = 0
     risks: list[str] = []
     status: Literal["active", "disparue"] = "active"
+    # Tri par l'utilisateur : gardée (intéressante) ou écartée (masquée, jamais reproposée).
+    decision: Literal["gardee", "ecartee"] | None = None
+    decision_reason: str | None = None
+    decided_at: float | None = None
+    source: Literal["disque", "balayage"] = "disque"
+    # Détail du calcul, pour vérifier soi-même.
+    buy_price: float | None = None
+    buy_fee: float | None = None
+    buy_shipping: float | None = None
+    delivery_mode: str | None = None
+    packaging: float = 0
+    comparables: list[Comparable] = []
+    vinted_median: float | None = None
+    discogs_by_condition: dict[str, float] = {}
+    discogs_lowest: float | None = None
+    discogs_for_sale: int | None = None
+    discogs_url: str | None = None
     first_seen: float = Field(default_factory=time.time)
     last_seen: float = Field(default_factory=time.time)
