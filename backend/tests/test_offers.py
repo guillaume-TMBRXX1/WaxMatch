@@ -189,7 +189,7 @@ def test_settings_geocoding():
     with TestClient(_app(apify), base_url="https://testserver") as client:
         _fast_geocoder(client)
         _login(client, namur=False)
-        assert client.get("/settings").json()["platforms"] == ["vinted", "2ememain"]
+        assert client.get("/settings").json()["platforms"] == ["vinted", "2ememain", "discogs"]
         saved = client.put("/settings", json={"city": "Namur", "country": "BE", "priority": "pickup"}).json()
         assert saved["latitude"] == 50.4669 and saved["location_label"] == "Namur, Belgique"
         assert client.get("/settings").json()["priority"] == "pickup"
@@ -467,3 +467,46 @@ def test_improved_filter_applies_to_cached_results():
         rejected = next(s for s in data["searches"] if s["platform"] == "2ememain")["rejected"]
         assert rejected[0]["reason"] == "objet exclu : catégorie CD/DVD"
         assert apify.calls == []  # tout venait du cache
+
+
+def test_discogs_listed_as_offer_platform():
+    """Les éditions vinyles en vente sur Discogs apparaissent comme des offres, sans run Apify."""
+    from app.discogs.models import DiscogsMatch
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.app.state.discogs_store.put(
+            "daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100, title="Daft Punk - Discovery")
+        )
+        data = client.get("/offers/albums/al1").json()
+        discogs = [l for l in data["listings"] if l["platform"] == "discogs"]
+        # Deux éditions en vente (fake_world) : 29,90 € (40 ex.) et 85 € (4 ex.), + 8 € de port estimé.
+        assert sorted(l["delivered_total"] for l in discogs) == [37.9, 93.0]
+        cheap = min(discogs, key=lambda l: l["delivered_total"])
+        assert cheap["url"] == "https://www.discogs.com/sell/release/12" and cheap["stock"] == 40
+        assert "Daft Punk - Discovery" in cheap["title"] and "2xLP, RE" in cheap["title"]
+        assert any("40 exemplaires en vente" in n for n in cheap["notes"])
+        assert not any("discogs" in a for a, _ in apify.calls)  # Discogs : API officielle, pas Apify
+
+        # Discogs désactivé dans les réglages : plus d'offres Discogs (la référence reste).
+        client.put("/settings", json={"city": "Namur", "country": "BE", "platforms": ["vinted", "2ememain"]})
+        data = client.get("/offers/albums/al1").json()
+        assert not [l for l in data["listings"] if l["platform"] == "discogs"] and data["discogs_reference"]
+
+
+def test_best_includes_albums_only_on_discogs():
+    from app.discogs.models import DiscogsMatch
+    from app.discogs.service import album_offers  # noqa: F401  (offres déjà en cache via /references)
+
+    apify = FakeApify()
+    with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
+        _fast_geocoder(client)
+        _login(client)
+        client.put("/settings", json={"city": "Namur", "country": "BE", "platforms": ["discogs"]})
+        client.app.state.discogs_store.put("daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100))
+        client.get("/offers/albums/al1")  # récupère les offres Discogs (aucun run Apify : plateforme seule)
+        assert apify.calls == []
+        best = client.get("/offers/best").json()
+        assert best["total"] == 1 and best["albums"][0]["best"]["platform"] == "discogs"

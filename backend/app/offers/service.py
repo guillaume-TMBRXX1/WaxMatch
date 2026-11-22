@@ -13,13 +13,14 @@ from app.geo import Geocoder
 from app.offers.models import AlbumListings, Listing, PlatformSearch, RejectedListing
 from app.offers.scoring import score_listings
 from app.user_settings import UserSettings
-from app.offers.platforms import PLATFORMS
+from app.discogs.models import AlbumOffers
+from app.offers.platforms import PLATFORMS, format_hint
 from app.spotify.normalize import LibraryAlbum, artist_key, fold, strip_nickname
 
 log = logging.getLogger("waxmatch.offers")
 
 # Coût réel observé : ~0,001-0,002 $ par recherche (20 annonces max) ; on garde une marge.
-COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003}
+COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003, "discogs": 0.0}
 
 _EXCLUDED = re.compile(
     r"\b(cd|cds|compact disc|cassette|cassettes|k7|dvd|blu ray|poster|affiche|t shirt|tshirt|tee shirt|"
@@ -179,11 +180,40 @@ async def search_platform(
     return search
 
 
+def discogs_listings(offers: AlbumOffers | None) -> list[Listing]:
+    """Éditions vinyles en vente sur Discogs (API officielle : prix le plus bas par édition)."""
+    if offers is None:
+        return []
+    result = []
+    for o in offers.offers:
+        if not o.lowest_price or o.num_for_sale <= 0:
+            continue
+        details = ", ".join(x for x in (o.format, o.country, o.released, o.label) if x)
+        result.append(
+            Listing(
+                platform="discogs",
+                external_id=str(o.release_id),
+                title=f"{offers.match.title or 'Discogs'} — {details}" if details else (offers.match.title or "Discogs"),
+                url=o.sell_url,  # page des annonces de cette édition
+                price=o.lowest_price,
+                currency=o.currency or "EUR",
+                total_known=o.lowest_price,  # pas de frais acheteur sur Discogs
+                photo_url=offers.match.cover_url,
+                format_hint=format_hint(o.format or ""),
+                shippable=True,
+                stock=o.num_for_sale,
+                match_score=100,
+            )
+        )
+    return result
+
+
 def build_album_listings(
     album: LibraryAlbum,
     searches: list[PlatformSearch],
     settings: UserSettings,
     discogs_reference: float | None,
+    discogs_offers: AlbumOffers | None = None,
 ) -> AlbumListings:
     # Le filtre est réappliqué aux résultats en cache : toute amélioration du filtre vaut aussi
     # pour les recherches déjà faites (et payées), sans relancer Apify.
@@ -199,6 +229,8 @@ def build_album_listings(
         cleaned.append(search.model_copy(update={"listings": kept, "rejected": rejected}))
     searches = cleaned
     raw = [lst for s in searches for lst in s.listings]
+    if "discogs" in settings.platforms:
+        raw += discogs_listings(discogs_offers)
     ranked, unreachable = score_listings(raw, settings, discogs_reference)
     return AlbumListings(
         spotify_id=album.spotify_id,
@@ -221,6 +253,7 @@ async def album_listings(
     refresh: bool = False,
     geocoder: Geocoder | None = None,
     discogs_reference: float | None = None,
+    discogs_offers: AlbumOffers | None = None,
 ) -> AlbumListings:
     async def one(platform: str) -> PlatformSearch:
         cached = None if refresh else store.get(platform, album.match_key, cache_hours * 3600)
@@ -231,8 +264,8 @@ async def album_listings(
             await store.put(album.match_key, result)
         return result
 
-    searches = await asyncio.gather(*(one(p) for p in settings.platforms))
-    return build_album_listings(album, list(searches), settings, discogs_reference)
+    searches = await asyncio.gather(*(one(p) for p in settings.apify_platforms))
+    return build_album_listings(album, list(searches), settings, discogs_reference, discogs_offers)
 
 
 # --------------------------------------------------------------------------- analyse en lot

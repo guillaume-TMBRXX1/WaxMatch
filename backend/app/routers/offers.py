@@ -60,6 +60,7 @@ async def offers_for_album(
     state = request.app.state
     settings = await user_settings(request, spotify, platforms)
     reference = await discogs_reference(request, album, fetch=True)
+    discogs_offers = state.discogs_store.get_offers(album.match_key)
     return await album_listings(
         apify,
         state.offers_store,
@@ -70,6 +71,7 @@ async def offers_for_album(
         refresh,
         geocoder=state.geocoder,
         discogs_reference=reference,
+        discogs_offers=discogs_offers,
     )
 
 
@@ -102,7 +104,8 @@ async def start_scan(
         todo = [
             a
             for a in sorted(albums, key=lambda a: a.added_at.timestamp() if a.added_at else 0, reverse=True)
-            if a.album_type != "single" and any(store.get(p, a.match_key, max_age) is None for p in settings.platforms)
+            if a.album_type != "single"
+            and any(store.get(p, a.match_key, max_age) is None for p in settings.apify_platforms)
         ][:limit]
         await run_scan(
             apify, store, job, todo, settings, config.apify_max_items, config.offers_cache_hours,
@@ -114,7 +117,7 @@ async def start_scan(
         try:
             for album in todo:
                 if any(store.get(p, album.match_key, max_age) and store.get(p, album.match_key, max_age).listings
-                       for p in settings.platforms):
+                       for p in settings.apify_platforms):
                     await discogs_reference(request, album, fetch=True)
         finally:
             job.running, job.phase = False, "terminé"
@@ -175,11 +178,16 @@ async def best_offers(
         if platform in settings.platforms:
             by_key.setdefault(key, []).append(search)
     rows = []
+    discogs_store = request.app.state.discogs_store
+    with_discogs = "discogs" in settings.platforms
     for album in albums:
-        searches = by_key.get(album.match_key)
-        if not searches:
+        searches = by_key.get(album.match_key, [])
+        offers = discogs_store.get_offers(album.match_key) if with_discogs else None
+        if not searches and offers is None:
             continue
-        result = build_album_listings(album, searches, settings, await discogs_reference(request, album, fetch=False))
+        result = build_album_listings(
+            album, searches, settings, await discogs_reference(request, album, fetch=False), offers
+        )
         if not result.listings:
             continue
         best = result.listings[0]

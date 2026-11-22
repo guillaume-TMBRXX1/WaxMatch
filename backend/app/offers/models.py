@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Platform = Literal["vinted", "leboncoin", "2ememain"]
+Platform = Literal["vinted", "leboncoin", "2ememain", "discogs"]
 
 
 class Listing(BaseModel):
@@ -33,6 +33,7 @@ class Listing(BaseModel):
     seller_is_pro: bool | None = None
     seller_rating: float | None = None  # 0 à 1
     seller_rating_count: int | None = None
+    stock: int | None = None  # Discogs : nombre d'exemplaires en vente pour cette édition
     published_at: str | None = None
     match_score: float | None = None
 

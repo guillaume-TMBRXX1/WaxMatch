@@ -1,4 +1,4 @@
-export type Platform = "vinted" | "leboncoin" | "2ememain";
+export type Platform = "vinted" | "leboncoin" | "2ememain" | "discogs";
 
 export interface DiscogsMatch {
   found: boolean;
@@ -41,6 +41,7 @@ export interface Listing {
   city: string | null;
   seller_name: string | null;
   seller_is_pro: boolean | null;
+  stock?: number | null;
   score: number;
   delivered_total: number | null;
   delivery_mode: "main propre" | "envoi" | null;
