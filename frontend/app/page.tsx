@@ -28,7 +28,7 @@ export default function Home() {
           En vinyle. Au juste prix.
         </h1>
         <p className="subtitle">
-          WaxMatch croise ta bibliothèque Spotify avec Vinted, 2ememain et Discogs, puis classe les offres
+          WaxMatch croise ta bibliothèque Spotify avec Vinted, 2ememain et le marché Discogs, puis classe les offres
           d&apos;occasion par prix livré, bonne affaire et proximité.
         </p>
         {loggedOut && (

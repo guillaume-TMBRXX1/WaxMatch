@@ -13,12 +13,12 @@ from app.user_settings import UserSettings
 
 # Frais de port indicatifs pour un vinyle 33T (colis ~0,5-1 kg), en euros.
 # Vinted : point relais (Mondial Relay, bpost…). 2ememain : envoi à convenir, souvent bpost.
-SHIPPING_ESTIMATE = {"vinted": 5.0, "2ememain": 7.5, "leboncoin": 5.5}
+SHIPPING_ESTIMATE = {"vinted": 5.0, "2ememain": 7.5, "leboncoin": 5.5, "discogs": 8.0}
 # Pays de livraison possibles par plateforme (Leboncoin ne livre qu'en France).
-SHIPS_TO = {"vinted": None, "2ememain": {"BE"}, "leboncoin": {"FR"}}  # None = pas de restriction connue
+SHIPS_TO = {"vinted": None, "2ememain": {"BE"}, "leboncoin": {"FR"}, "discogs": None}  # None = pas de restriction connue
 
 # Port typique d'un vinyle acheté sur Discogs et livré en Europe (vendeur européen), en euros.
-DISCOGS_SHIPPING_ESTIMATE = 8.0
+DISCOGS_SHIPPING_ESTIMATE = SHIPPING_ESTIMATE["discogs"]
 
 
 def discogs_reference_price(offers: AlbumOffers | None) -> float | None:
@@ -111,6 +111,11 @@ def score_listings(
             s.notes.append("Prix non indiqué (voir l'annonce)")
             unreachable.append(s)
             continue
+        if s.platform == "discogs":
+            s.notes.append(
+                f"{s.stock} exemplaire{'s' if (s.stock or 0) > 1 else ''} en vente · prix le plus bas : "
+                "état et port réels à vérifier sur Discogs"
+            )
         if s.price_type == "MIN_BID":
             s.notes.append("Prix « à partir de » : offre à négocier")
 

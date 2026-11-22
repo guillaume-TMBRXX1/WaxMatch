@@ -5,7 +5,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Priority = Literal["price", "balanced_price", "balanced", "pickup"]
-PlatformName = Literal["vinted", "leboncoin", "2ememain"]
+PlatformName = Literal["vinted", "leboncoin", "2ememain", "discogs"]
+APIFY_PLATFORMS = {"vinted", "leboncoin", "2ememain"}  # interrogées via Apify (Discogs : API officielle)
 
 # Pondérations du score (total 100) selon la priorité choisie.
 PRESETS: dict[str, dict[str, float]] = {
@@ -25,7 +26,7 @@ class SettingsInput(BaseModel):
         description="price = prix avant tout ; balanced_price = équilibre tendance prix ; "
         "balanced = équilibre ; pickup = main propre avant tout",
     )
-    platforms: list[PlatformName] = Field(default_factory=lambda: ["vinted", "2ememain"])
+    platforms: list[PlatformName] = Field(default_factory=lambda: ["vinted", "2ememain", "discogs"])
 
 
 class UserSettings(SettingsInput):
@@ -36,6 +37,10 @@ class UserSettings(SettingsInput):
     @property
     def weights(self) -> dict[str, float]:
         return PRESETS[self.priority]
+
+    @property
+    def apify_platforms(self) -> list[str]:
+        return [p for p in self.platforms if p in APIFY_PLATFORMS]
 
 
 class SettingsStore:

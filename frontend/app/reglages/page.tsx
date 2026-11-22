@@ -14,6 +14,7 @@ const PRIORITIES: { value: UserSettings["priority"]; label: string; hint: string
 const PLATFORMS: { value: Platform; label: string; hint: string }[] = [
   { value: "vinted", label: "Vinted", hint: "Envoi en point relais, catalogue européen" },
   { value: "2ememain", label: "2ememain", hint: "Petites annonces belges, main propre" },
+  { value: "discogs", label: "Discogs", hint: "Marché mondial des disquaires et collectionneurs (sans coût Apify)" },
   { value: "leboncoin", label: "Leboncoin", hint: "France : main propre près de la frontière" },
 ];
 

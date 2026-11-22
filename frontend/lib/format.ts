@@ -15,4 +15,5 @@ export const PLATFORM_LABEL: Record<string, string> = {
   vinted: "Vinted",
   leboncoin: "Leboncoin",
   "2ememain": "2ememain",
+  discogs: "Discogs",
 };
