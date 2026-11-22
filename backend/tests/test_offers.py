@@ -470,8 +470,8 @@ def test_improved_filter_applies_to_cached_results():
         assert apify.calls == []  # tout venait du cache
 
 
-def test_discogs_listed_as_offer_platform():
-    """Les éditions vinyles en vente sur Discogs apparaissent comme des offres, sans run Apify."""
+def test_discogs_shown_apart_without_score():
+    """Discogs : prix hors port, port et livraison en Belgique inconnus -> vitrine à part, jamais classée."""
     from app.discogs.models import DiscogsMatch
 
     apify = FakeApify()
@@ -482,24 +482,18 @@ def test_discogs_listed_as_offer_platform():
             "daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100, title="Daft Punk - Discovery")
         )
         data = client.get("/offers/albums/al1").json()
-        discogs = [l for l in data["listings"] if l["platform"] == "discogs"]
-        # Deux éditions en vente (fake_world) : 29,90 € (40 ex.) et 85 € (4 ex.), + 8 € de port estimé.
-        assert sorted(l["delivered_total"] for l in discogs) == [37.9, 93.0]
-        cheap = min(discogs, key=lambda l: l["delivered_total"])
-        assert cheap["url"] == "https://www.discogs.com/sell/release/12" and cheap["stock"] == 40
-        assert "Daft Punk - Discovery" in cheap["title"] and "2xLP, RE" in cheap["title"]
-        assert any("40 exemplaires en vente" in n for n in cheap["notes"])
-        assert not any("discogs" in a for a, _ in apify.calls)  # Discogs : API officielle, pas Apify
+        assert not [l for l in data["listings"] if l["platform"] == "discogs"]  # jamais dans le classement
+        market = data["discogs_market"]
+        assert [m["price"] for m in market] == [29.9, 85.0]  # du moins cher au plus cher, hors port
+        assert market[0]["url"] == "https://www.discogs.com/sell/release/12" and market[0]["stock"] == 40
+        assert not any(a for a, _ in apify.calls if "discogs" in a)
 
-        # Discogs désactivé dans les réglages : plus d'offres Discogs (la référence reste).
         client.put("/settings", json={"city": "Namur", "country": "BE", "platforms": ["vinted", "2ememain"]})
-        data = client.get("/offers/albums/al1").json()
-        assert not [l for l in data["listings"] if l["platform"] == "discogs"] and data["discogs_reference"]
+        assert client.get("/offers/albums/al1").json()["discogs_market"] == []
 
 
-def test_best_includes_albums_only_on_discogs():
+def test_best_ignores_albums_only_on_discogs():
     from app.discogs.models import DiscogsMatch
-    from app.discogs.service import album_offers  # noqa: F401  (offres déjà en cache via /references)
 
     apify = FakeApify()
     with TestClient(_app(apify, discogs_token="DT", discogs_min_interval=0), base_url="https://testserver") as client:
@@ -507,10 +501,29 @@ def test_best_includes_albums_only_on_discogs():
         _login(client)
         client.put("/settings", json={"city": "Namur", "country": "BE", "platforms": ["discogs"]})
         client.app.state.discogs_store.put("daft punk|discovery", DiscogsMatch(found=True, kind="master", id=100))
-        client.get("/offers/albums/al1")  # récupère les offres Discogs (aucun run Apify : plateforme seule)
-        assert apify.calls == []
-        best = client.get("/offers/best").json()
-        assert best["total"] == 1 and best["albums"][0]["best"]["platform"] == "discogs"
+        client.get("/offers/albums/al1")
+        assert apify.calls == [] and client.get("/offers/best").json()["total"] == 0
+
+
+def test_new_spotify_albums_get_discogs_genres_automatically():
+    from tests.test_discogs import fake_world
+
+    settings = Settings(
+        spotify_client_id="cid", spotify_client_secret="secret", spotify_redirect_uri="https://testserver/auth/callback",
+        frontend_url="https://testserver/done", session_secret="s", cookie_secure=False,
+        discogs_token="DT", discogs_min_interval=0,
+    )
+    with TestClient(create_app(settings, transport=httpx.MockTransport(fake_world)), base_url="https://testserver") as client:
+        _login(client, namur=False)
+        client.get("/library/albums", params={"refresh": True})  # comme le bouton « Actualiser »
+        for _ in range(300):
+            status = client.get("/discogs/enrich/status").json()
+            if status["phase"] == "terminé":
+                break
+            time.sleep(0.02)
+        assert status["matched"] == 1  # Discovery trouvé sans lancer l'enrichissement à la main
+        albums = {a["title"]: a for a in client.get("/library/albums").json()["albums"]}
+        assert albums["Discovery"]["styles"] == ["House", "Disco"]
 
 
 # --------------------------------------------------------------------------- cote Discogs par état
