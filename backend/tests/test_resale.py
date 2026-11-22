@@ -264,3 +264,24 @@ def test_sweep_matches_many_listings_with_few_searches():
         assert opp["source"] == "balayage" and opp["listing"]["external_id"] == "900"
         assert opp["vinted_median"] == 40 and len(opp["comparables"]) == 3  # vérifiée avec des comparables
         assert opp["buy_total"] == 15.1  # 10,10 € (protection incluse) + 5 € de port estimé
+
+
+def test_daily_counter_follows_brussels_time(monkeypatch):
+    """À 00h45 à Bruxelles (23h45 UTC), c'est déjà un nouveau jour pour le compteur Apify."""
+    from datetime import datetime, timezone
+
+    import app.resale.store as store_module
+    from app.resale.store import ResaleStore
+
+    utc_evening = datetime(2026, 11, 22, 23, 45, tzinfo=timezone.utc)  # 00h45 le 23 à Bruxelles
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return utc_evening.astimezone(tz) if tz else utc_evening.replace(tzinfo=None)
+
+    monkeypatch.setattr(store_module, "datetime", FrozenDatetime)
+    store = ResaleStore()
+    store.meta["usage:2026-11-22"] = {"apify_runs": 30}  # quota consommé la veille
+    assert store.today().isoformat() == "2026-11-23"
+    assert store.apify_runs_today() == 0

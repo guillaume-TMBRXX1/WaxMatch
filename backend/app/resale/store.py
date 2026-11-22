@@ -1,14 +1,17 @@
 """Persistance de l'onglet Revente (mémoire + PostgreSQL si disponible)."""
 
 import time
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from app.resale.models import Opportunity, ResaleSettings, WatchItem
 
 
 class ResaleStore:
-    def __init__(self, pool=None):
+    def __init__(self, pool=None, timezone: str = "Europe/Brussels"):
         self.pool = pool
+        # Le compteur journalier suit l'heure locale de l'utilisateur, pas celle du serveur (UTC sur Colab).
+        self.tz = ZoneInfo(timezone)
         self.watchlist: dict[str, WatchItem] = {}
         self.opportunities: dict[str, Opportunity] = {}
         self.meta: dict[str, dict] = {}
@@ -41,12 +44,15 @@ class ResaleStore:
     async def save_settings(self, settings: ResaleSettings) -> None:
         await self._put_meta("settings", settings.model_dump(mode="json"))
 
+    def today(self) -> date:
+        return datetime.now(self.tz).date()
+
     def apify_runs_today(self) -> int:
-        return int((self.meta.get(f"usage:{date.today().isoformat()}") or {}).get("apify_runs", 0))
+        return int((self.meta.get(f"usage:{self.today().isoformat()}") or {}).get("apify_runs", 0))
 
     async def add_apify_runs(self, n: int) -> None:
         if n:
-            await self._put_meta(f"usage:{date.today().isoformat()}", {"apify_runs": self.apify_runs_today() + n})
+            await self._put_meta(f"usage:{self.today().isoformat()}", {"apify_runs": self.apify_runs_today() + n})
 
     # ------------------------------------------------------------------ liste de surveillance
     async def replace_watchlist(self, items: list[WatchItem]) -> None:

@@ -10,6 +10,7 @@ itsdangerous>=2.2,<3
 rapidfuzz>=3.11,<4
 asyncpg>=0.30,<1
 cryptography>=42
+tzdata>=2024.1  # fuseaux horaires même sans base système (zoneinfo)
 
 # Tests
 pytest>=8.3

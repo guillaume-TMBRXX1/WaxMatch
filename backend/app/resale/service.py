@@ -255,7 +255,11 @@ async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:
         config = PLATFORMS[platform]
         for query in rs.sweep_queries:
             if ctx.apify is None or ctx.resale.apify_runs_today() >= rs.daily_apify_runs:
-                job.last_error = "Plafond Apify du jour atteint : balayage partiel"
+                job.last_error = (
+                    f"Plafond Apify du jour atteint ({ctx.resale.apify_runs_today()}/{rs.daily_apify_runs} recherches) : "
+                    "balayage partiel. Remise à zéro à minuit (heure de Bruxelles) ; le plafond se règle dans "
+                    "« Réglages de la revente »."
+                )
                 return list(listings.values())
             try:
                 items = await ctx.apify.run_actor(
