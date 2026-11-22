@@ -7,15 +7,16 @@ from statistics import median
 
 from app.discogs.models import AlbumOffers
 from app.geo import haversine_km
+from app.offers.ebay import EU as EBAY_EU
 from app.offers.models import Listing, ScoredListing
 from app.spotify.normalize import fold
 from app.user_settings import UserSettings
 
 # Frais de port indicatifs pour un vinyle 33T (colis ~0,5-1 kg), en euros.
 # Vinted : point relais (Mondial Relay, bpost…). 2ememain : envoi à convenir, souvent bpost.
-SHIPPING_ESTIMATE = {"vinted": 5.0, "2ememain": 7.5, "leboncoin": 5.5, "discogs": 8.0}
+SHIPPING_ESTIMATE = {"vinted": 5.0, "2ememain": 7.5, "leboncoin": 5.5, "discogs": 8.0, "ebay": 12.0}
 # Pays de livraison possibles par plateforme (Leboncoin ne livre qu'en France).
-SHIPS_TO = {"vinted": None, "2ememain": {"BE"}, "leboncoin": {"FR"}, "discogs": None}  # None = pas de restriction connue
+SHIPS_TO = {"vinted": None, "2ememain": {"BE"}, "leboncoin": {"FR"}, "discogs": None, "ebay": None}  # None = pas de restriction connue
 
 # Port typique d'un vinyle acheté sur Discogs et livré en Europe (vendeur européen), en euros.
 DISCOGS_SHIPPING_ESTIMATE = SHIPPING_ESTIMATE["discogs"]
@@ -37,7 +38,7 @@ def discogs_reference_price(offers: AlbumOffers | None) -> float | None:
 _GRADES = [
     (re.compile(r"blister|scell|sealed|sous cello"), "M"),
     (re.compile(r"neuf|new|mint"), "NM"),
-    (re.compile(r"tres bon|excellent|comme neuf|nickel"), "VG+"),
+    (re.compile(r"tres bon|excellent|comme neuf|nickel|very good|like new|vg\b ?\+|\bvg\+"), "VG+"),
     (re.compile(r"bon etat|\bbon\b|good"), "VG"),
     (re.compile(r"satisfaisant|correct|usage|use|abime"), "G+"),
 ]
@@ -159,16 +160,22 @@ def score_listings(
         if s.pickup_possible:
             options.append((s.price, "main propre", None))  # pas de frais acheteur en main propre
         if can_ship:
-            shipping = SHIPPING_ESTIMATE[s.platform]
+            # Port réel quand la plateforme le donne (eBay), sinon estimation indicative.
+            shipping = s.shipping_cost if s.shipping_cost is not None else SHIPPING_ESTIMATE[s.platform]
             options.append((round((s.total_known or s.price) + shipping, 2), "envoi", shipping))
         if not options:
             where = f" ({s.distance_km} km)" if s.distance_km is not None else ""
-            s.notes.append(f"Non livrable en {settings.country} et hors de ton rayon de main propre{where}")
+            if s.platform == "ebay" and s.country and s.country not in EBAY_EU:
+                s.notes.append(f"Vendeur hors UE ({s.country}) : douane et TVA à l'import")
+            else:
+                s.notes.append(f"Non livrable en {settings.country} et hors de ton rayon de main propre{where}")
             unreachable.append(s)
             continue
         s.delivered_total, s.delivery_mode, s.shipping_estimate = min(options, key=lambda o: o[0])
         if s.delivery_mode == "main propre":
             s.notes.append(f"Main propre possible ({s.distance_km} km)")
+        elif s.shipping_cost is not None:
+            s.notes.append(f"Port {s.shipping_estimate:.2f} € (indiqué par le vendeur)".replace(".", ","))
         else:
             s.notes.append(f"Port estimé {s.shipping_estimate:.2f} €".replace(".", ","))
         candidates.append(s)

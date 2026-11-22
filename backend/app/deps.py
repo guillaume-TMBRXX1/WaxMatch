@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request
 from app.config import Settings
 from app.discogs.client import DiscogsClient
 from app.offers.apify import ApifyClient
+from app.offers.ebay import EbayClient
 from app.spotify.client import SpotifyClient
 from app.store import TokenStore
 
@@ -43,6 +44,11 @@ def get_apify(
     if not settings.apify_token:
         raise HTTPException(status_code=503, detail="Apify non configuré : ajoute le secret APIFY_TOKEN")
     return ApifyClient(http, settings.apify_token)
+
+
+def get_ebay(request: Request) -> "EbayClient | None":
+    """Client eBay partagé (jeton mis en cache) ; None si les clés ne sont pas configurées."""
+    return request.app.state.ebay
 
 
 async def get_spotify(

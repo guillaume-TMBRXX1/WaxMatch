@@ -15,6 +15,7 @@ const PLATFORMS: { value: Platform; label: string; hint: string }[] = [
   { value: "vinted", label: "Vinted", hint: "Envoi en point relais, catalogue européen" },
   { value: "2ememain", label: "2ememain", hint: "Petites annonces belges, main propre" },
   { value: "discogs", label: "Discogs", hint: "Affiché à part : prix hors port, livraison en Belgique à vérifier" },
+  { value: "ebay", label: "eBay", hint: "Annonces européennes, port réel affiché (gratuit, clés eBay requises)" },
   { value: "leboncoin", label: "Leboncoin", hint: "France : main propre près de la frontière" },
 ];
 

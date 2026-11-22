@@ -16,4 +16,5 @@ export const PLATFORM_LABEL: Record<string, string> = {
   leboncoin: "Leboncoin",
   "2ememain": "2ememain",
   discogs: "Discogs",
+  ebay: "eBay",
 };

@@ -75,6 +75,7 @@ async def offers_for_album(
         discogs_reference=reference,
         discogs_offers=discogs_offers,
         target_price=target,
+        ebay=state.ebay,
     )
 
 
@@ -121,7 +122,7 @@ async def start_scan(
         todo = sorted(candidates, key=rotation_key)[:limit]
         await run_scan(
             apify, store, job, todo, settings, config.apify_max_items, config.offers_cache_hours,
-            config.apify_concurrency, state.geocoder,
+            config.apify_concurrency, state.geocoder, state.ebay,
         )
         # Prix de référence Discogs des albums qui ont des offres : sans lui, impossible de dire
         # si une offre est une bonne affaire (et de comparer les albums entre eux).

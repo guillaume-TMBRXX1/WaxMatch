@@ -31,6 +31,10 @@ Spotify-to-Vinyl Smart Matcher : ta bibliothèque Spotify associée aux meilleur
 | GET | `/offers/best` | Meilleure annonce connue pour chaque album (`sort=deal\|score\|price`, `deal` = écart avec Discogs), sans coût |
 | GET / PUT / DELETE | `/targets`, `/targets/{spotify_id}` | Prix cible par album : les annonces livrées en dessous sont signalées |
 | GET / POST / DELETE | `/favorites` | Favoris et suivi de leur état |
+| GET / PUT | `/resale/settings` | Réglages de la revente (marge et rendement minimum, achat maximum, plateformes, plafond Apify) |
+| POST | `/resale/watchlist/build` | Construit la liste de surveillance (vinyles les plus demandés sur Discogs) |
+| POST | `/resale/scan` | Cherche des annonces pour les disques surveillés et calcule la marge de revente sur Vinted |
+| GET | `/resale/opportunities`, `/resale/stats`, `/resale/status` | Opportunités repérées, journal d'observation, avancée |
 | GET | `/health` | Contrôle de santé : état de la base, nombre d'utilisateurs et de correspondances Discogs |
 
 Base de données : PostgreSQL/Supabase via `DATABASE_URL` (migrations appliquées automatiquement au démarrage, depuis `backend/app/migrations/`). Tests sur une vraie base : `TEST_DATABASE_URL=postgresql://… pytest`.
