@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None
     # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.
-    library_max_age_hours: int = 24
+    library_max_age_hours: int = 6
 
     # Garde-fous
     max_albums: int = 2000

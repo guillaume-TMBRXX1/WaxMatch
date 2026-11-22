@@ -234,8 +234,8 @@ def build_album_listings(
         cleaned.append(search.model_copy(update={"listings": kept, "rejected": rejected}))
     searches = cleaned
     raw = [lst for s in searches for lst in s.listings]
-    if "discogs" in settings.platforms:
-        raw += discogs_listings(discogs_offers)
+    market = discogs_listings(discogs_offers) if "discogs" in settings.platforms else []
+    market.sort(key=lambda lst: lst.price or 0)
     suggestions = discogs_offers.price_suggestions if discogs_offers else None
     ranked, unreachable = score_listings(raw, settings, discogs_reference, price_suggestions=suggestions)
     return AlbumListings(
@@ -246,6 +246,7 @@ def build_album_listings(
         discogs_by_condition=suggestions or {},
         listings=ranked,
         unreachable=unreachable,
+        discogs_market=market,
         searches=searches,
     )
 

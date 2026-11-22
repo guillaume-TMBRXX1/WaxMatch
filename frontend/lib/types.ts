@@ -63,7 +63,17 @@ export interface AlbumListings {
   discogs_by_condition?: Record<string, number>;
   listings: Listing[];
   unreachable: Listing[];
+  discogs_market?: DiscogsMarketItem[];
   searches: { platform: Platform; raw_count: number; error: string | null; from_cache: boolean }[];
+}
+
+export interface DiscogsMarketItem {
+  external_id: string;
+  title: string;
+  url: string;
+  price: number | null;
+  format_hint: string | null;
+  stock?: number | null;
 }
 
 export interface BestRow {

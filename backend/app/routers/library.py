@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections import Counter
 from typing import Literal
@@ -46,8 +47,26 @@ async def load_library(request: Request, spotify: SpotifyClient, refresh: bool) 
     albums = dedupe([normalize_saved_item(it, artists_by_id) for it in items])
     if repo is not None and spotify.tokens.spotify_user_id:
         await repo.save(spotify.tokens.spotify_user_id, albums)
+    start_discogs_for_new_albums(request, albums)
     state.library_cache[user_key] = (time.time(), albums)
     return albums
+
+
+def start_discogs_for_new_albums(request: Request, albums: list[LibraryAlbum]) -> None:
+    """Nouveaux albums ajoutés sur Spotify : genres et styles Discogs cherchés en arrière-plan."""
+    state = request.app.state
+    settings = state.settings
+    store = state.discogs_store
+    job = state.discogs_job
+    if not settings.discogs_token or job.running or not any(store.needs_lookup(a.match_key) for a in albums):
+        return
+    from app.deps import get_discogs
+    from app.discogs.service import run_enrichment
+
+    client = get_discogs(request, settings, state.http)
+    state.discogs_task = asyncio.create_task(
+        run_enrichment(client, store, job, albums, settings.discogs_match_threshold)
+    )
 
 
 def with_discogs(request: Request, albums: list[LibraryAlbum]) -> list[LibraryAlbum]:

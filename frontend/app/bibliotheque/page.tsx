@@ -22,6 +22,9 @@ export default function LibraryPage() {
 
   const params = new URLSearchParams({ sort, limit: "2000" });
   if (genre) params.set("genre", genre);
+  const [refreshed, setRefreshed] = useState(0);
+  if (refreshed) params.set("refresh", "true");
+  if (refreshed) params.set("r", String(refreshed));
   const albums = useApi<{ total: number; albums: Album[] }>(`/library/albums?${params}`);
   const best = useApi<{ albums: BestRow[] }>("/offers/best?sort=price&limit=500");
   const bestPrice = useMemo(
@@ -45,9 +48,20 @@ export default function LibraryPage() {
     <>
       <section className="page-head">
         <span className="label">{albums.data ? `${albums.data.total} albums` : "Bibliothèque"}</span>
-        <h1 className="page-title" style={{ marginTop: 10 }}>
-          Ma bibliothèque
-        </h1>
+        <div className="row">
+          <h1 className="page-title" style={{ marginTop: 10 }}>
+            Ma bibliothèque
+          </h1>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setRefreshed(Date.now())}
+            disabled={albums.loading}
+            title="Recharge tes albums depuis Spotify (sinon : automatiquement toutes les 6 h)"
+          >
+            {albums.loading && refreshed ? "Actualisation…" : "Actualiser depuis Spotify"}
+          </button>
+        </div>
         <p className="subtitle">
           Tes albums Spotify, enrichis des genres et styles Discogs. Clique sur un album pour chercher ses offres
           vinyles.

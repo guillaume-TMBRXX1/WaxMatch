@@ -200,7 +200,7 @@ async def best_offers(
     for album in albums:
         searches = by_key.get(album.match_key, [])
         offers = discogs_store.get_offers(album.match_key) if with_discogs else None
-        if not searches and offers is None:
+        if not searches:  # Discogs seul : prix hors port non comparables, pas de classement
             continue
         result = build_album_listings(
             album, searches, settings, await discogs_reference(request, album, fetch=False), offers

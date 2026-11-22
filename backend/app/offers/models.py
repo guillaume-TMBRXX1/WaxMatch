@@ -78,5 +78,8 @@ class AlbumListings(BaseModel):
     discogs_by_condition: dict[str, float] = {}  # prix conseillés Discogs par état, hors port
     listings: list[ScoredListing]  # du meilleur score au moins bon
     unreachable: list[ScoredListing] = []  # ni livrable chez toi, ni dans ton rayon de main propre
+    # Éditions en vente sur Discogs : prix le plus bas HORS PORT. L'API ne donne ni le pays du vendeur,
+    # ni le port, ni la livraison possible en Belgique : affichées à part, sans score ni « bonne affaire ».
+    discogs_market: list[Listing] = []
     searches: list[PlatformSearch]
     note: str = "Frais de port estimés (barème indicatif) ; à confirmer sur l'annonce."

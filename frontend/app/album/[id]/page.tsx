@@ -207,6 +207,38 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
         </div>
       )}
 
+      {(offers.data?.discogs_market?.length ?? 0) > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2>Sur Discogs</h2>
+          <p className="subtitle" style={{ marginBottom: 14 }}>
+            Prix le plus bas de chaque édition, <strong>hors port</strong>. Le port dépend du vendeur (souvent élevé
+            hors Europe) et certains ne livrent pas en Belgique : vérifie sur Discogs avant d&apos;acheter. Ces offres
+            ne sont donc pas classées.
+          </p>
+          <div className="stack" style={{ gap: 10 }}>
+            {offers.data!.discogs_market!.map((m) => (
+              <div key={m.external_id} className="panel cluster" style={{ justifyContent: "space-between", gap: 12 }}>
+                <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+                  <div style={{ fontWeight: 700 }}>{m.title}</div>
+                  <div style={{ color: "var(--ink-2)", fontSize: 13 }}>
+                    {m.stock} exemplaire{(m.stock ?? 0) > 1 ? "s" : ""} en vente
+                  </div>
+                </div>
+                <div className="cluster">
+                  <span className="figure" style={{ fontSize: 26 }}>
+                    dès {formatPrice(m.price)}
+                  </span>
+                  <span className="label">+ port</span>
+                  <a className="btn-secondary" href={m.url} target="_blank" rel="noopener noreferrer">
+                    Voir sur Discogs
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {offers.data?.searches.some((s) => s.error) && (
         <p className="negative" role="alert" style={{ marginTop: 16 }}>
           {offers.data.searches
