@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     ebay_client_id: str | None = None
     ebay_client_secret: str | None = None
 
+    # Fuseau horaire de l'utilisateur (compteurs journaliers, dates affichées)
+    timezone: str = "Europe/Brussels"
+
     # PostgreSQL (Supabase, URL du "Session pooler"). Sans URL : tout reste en mémoire.
     database_url: str | None = None
     # Au-delà, la bibliothèque est rechargée depuis Spotify au lieu de la base.

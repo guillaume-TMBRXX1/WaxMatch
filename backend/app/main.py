@@ -55,7 +55,7 @@ def create_app(
             else None
         )
         app.state.targets_store = TargetsStore(pool)
-        app.state.resale_store = ResaleStore(pool)
+        app.state.resale_store = ResaleStore(pool, settings.timezone)
         await app.state.resale_store.load()
         app.state.geocoder = Geocoder(app.state.http, settings.geocoder_user_agent, pool)
         await app.state.geocoder.load()

@@ -422,9 +422,12 @@ export default function ResalePage() {
             ) : (
               <p style={{ margin: "6px 0 0", color: "var(--ink-2)" }}>
                 {s?.watched
-                  ? `Apify aujourd'hui : ${s.apify_runs_today}/${s.apify_daily_cap} recherches (crédit gratuit). eBay : ${
-                      s.ebay_configured ? "actif, gratuit" : "clés non configurées"
-                    }.`
+                  ? `Apify aujourd'hui : ${s.apify_runs_today}/${s.apify_daily_cap} recherches (remise à zéro à minuit). ` +
+                    `Un balayage large en utilise ${s.sweep_cost ?? "?"}` +
+                    ((s.sweep_cost ?? 0) > s.apify_daily_cap - s.apify_runs_today
+                      ? ` : il n'en reste que ${Math.max(s.apify_daily_cap - s.apify_runs_today, 0)}, le balayage sera partiel.`
+                      : ".") +
+                    ` eBay : ${s.ebay_configured ? "actif, gratuit" : "non configuré"}.`
                   : "Commence par construire la liste de surveillance : les disques les plus demandés sur Discogs (gratuit)."}
               </p>
             )}

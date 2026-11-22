@@ -201,5 +201,9 @@ async def stats(request: Request, spotify: SpotifyClient = Depends(get_spotify))
         "observing_since": min((o.first_seen for o in opps), default=None),
         "apify_runs_today": store.apify_runs_today(),
         "apify_daily_cap": store.settings.daily_apify_runs,
+        "apify_day": store.today().isoformat(),
+        # Recherches nécessaires pour un balayage complet (requêtes × plateformes Apify).
+        "sweep_cost": len(store.settings.sweep_queries)
+        * len([p for p in ("vinted", "2ememain") if p in store.settings.platforms]),
         "ebay_configured": request.app.state.ebay is not None,
     }

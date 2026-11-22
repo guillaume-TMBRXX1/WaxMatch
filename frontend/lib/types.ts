@@ -193,6 +193,8 @@ export interface ResaleStats {
   observing_since: number | null;
   apify_runs_today: number;
   apify_daily_cap: number;
+  apify_day?: string;
+  sweep_cost?: number;
   ebay_configured: boolean;
 }
 
