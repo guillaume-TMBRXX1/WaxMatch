@@ -32,6 +32,7 @@ export function DealCard({
         )}
         <div style={{ minWidth: 0 }}>
           <div className="cluster" style={{ marginBottom: 6 }}>
+            {row.under_target && <span className="badge-live">Sous ta cible</span>}
             {hot && <span className="badge-live">Bonne affaire</span>}
             <span className="pill">{PLATFORM_LABEL[best.platform]}</span>
             <span className="pill">{best.delivery_mode === "main propre" ? `Main propre · ${best.distance_km} km` : "Envoi"}</span>
@@ -41,6 +42,7 @@ export function DealCard({
           </div>
           <div className="album-artist">{row.artist}</div>
           <div className="album-artist" style={{ marginTop: 4 }}>
+            {row.target_price ? `Cible ${formatPrice(row.target_price)} · ` : ""}
             {row.offers_count} offre{row.offers_count > 1 ? "s" : ""}
             {best.condition ? ` · ${best.condition}` : ""}
           </div>

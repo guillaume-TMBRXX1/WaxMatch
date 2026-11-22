@@ -62,6 +62,7 @@ async def offers_for_album(
     settings = await user_settings(request, spotify, platforms)
     reference = await discogs_reference(request, album, fetch=True)
     discogs_offers = state.discogs_store.get_offers(album.match_key)
+    target = await state.targets_store.get(spotify.tokens.spotify_user_id or spotify.session_id, album.spotify_id)
     return await album_listings(
         apify,
         state.offers_store,
@@ -73,6 +74,7 @@ async def offers_for_album(
         geocoder=state.geocoder,
         discogs_reference=reference,
         discogs_offers=discogs_offers,
+        target_price=target,
     )
 
 
@@ -180,8 +182,8 @@ async def scan_status(request: Request):
 @router.get("/best")
 async def best_offers(
     request: Request,
-    sort: Literal["deal", "score", "price"] = Query(
-        "deal", description="deal = meilleure affaire par rapport à Discogs ; score ; price = moins cher"
+    sort: Literal["deal", "score", "price", "target"] = Query(
+        "deal", description="deal = meilleure affaire vs Discogs ; score ; price = moins cher ; target = sous ma cible"
     ),
     limit: int = Query(50, ge=1, le=500),
     spotify: SpotifyClient = Depends(get_spotify),
@@ -197,13 +199,15 @@ async def best_offers(
     rows = []
     discogs_store = request.app.state.discogs_store
     with_discogs = "discogs" in settings.platforms
+    targets = await request.app.state.targets_store.all(spotify.tokens.spotify_user_id or spotify.session_id)
     for album in albums:
         searches = by_key.get(album.match_key, [])
         offers = discogs_store.get_offers(album.match_key) if with_discogs else None
         if not searches:  # Discogs seul : prix hors port non comparables, pas de classement
             continue
         result = build_album_listings(
-            album, searches, settings, await discogs_reference(request, album, fetch=False), offers
+            album, searches, settings, await discogs_reference(request, album, fetch=False), offers,
+            targets.get(album.spotify_id),
         )
         if not result.listings:
             continue
@@ -219,10 +223,14 @@ async def best_offers(
                 "offers_count": len(result.listings),
                 "discogs_reference": result.discogs_reference,
                 "vs_discogs": ratio,  # 0.7 = 30 % moins cher que Discogs (port compris côté annonce)
+                "target_price": result.target_price,
+                "under_target": best.under_target,
                 "best": best.model_dump(),
             }
         )
-    if sort == "price":
+    if sort == "target":  # albums sous le prix cible d'abord
+        rows.sort(key=lambda r: (not r["under_target"], r["target_price"] is None, r["best"]["delivered_total"]))
+    elif sort == "price":
         rows.sort(key=lambda r: r["best"]["delivered_total"])
     elif sort == "score":
         rows.sort(key=lambda r: r["best"]["score"], reverse=True)

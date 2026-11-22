@@ -68,6 +68,7 @@ class ScoredListing(Listing):
     reference: float | None = None  # prix Discogs de comparaison pour CET état, port compris
     notes: list[str] = []
     also_on: list[str] = []  # même annonce repérée sur une autre plateforme (liens)
+    under_target: bool = False  # prix livré sous le prix cible de l'utilisateur
 
 
 class AlbumListings(BaseModel):
@@ -76,6 +77,7 @@ class AlbumListings(BaseModel):
     title: str
     discogs_reference: float | None = None  # prix Discogs typique livré (médiane des éditions + port)
     discogs_by_condition: dict[str, float] = {}  # prix conseillés Discogs par état, hors port
+    target_price: float | None = None  # prix cible de l'utilisateur pour cet album
     listings: list[ScoredListing]  # du meilleur score au moins bon
     unreachable: list[ScoredListing] = []  # ni livrable chez toi, ni dans ton rayon de main propre
     # Éditions en vente sur Discogs : prix le plus bas HORS PORT. L'API ne donne ni le pays du vendeur,

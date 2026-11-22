@@ -5,7 +5,7 @@ import { use, useState } from "react";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { ErrorState } from "@/components/States";
 import { useFavorites } from "@/lib/favorites";
-import { useApi } from "@/lib/api";
+import { api, ApiError, useApi } from "@/lib/api";
 import { formatDelta, formatPrice, PLATFORM_LABEL } from "@/lib/format";
 import type { Album, AlbumListings, Listing } from "@/lib/types";
 
@@ -45,6 +45,7 @@ function ListingRow({
         )}
         <div style={{ minWidth: 0 }}>
           <div className="cluster" style={{ marginBottom: 6 }}>
+            {listing.under_target && <span className="badge-live">Sous ta cible</span>}
             {hot && <span className="badge-live">Bonne affaire</span>}
             <span className="pill">{PLATFORM_LABEL[listing.platform]}</span>
             {listing.format_hint && <span className="pill">{listing.format_hint}</span>}
@@ -99,6 +100,88 @@ function ListingRow({
   );
 }
 
+function TargetPrice({
+  spotifyId,
+  current,
+  onSaved,
+}: {
+  spotifyId: string;
+  current: number | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const price = Number(value.replace(",", "."));
+    if (!price || price <= 0) {
+      setMessage("Indique un prix supérieur à 0 €.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api(`/targets/${spotifyId}`, { method: "PUT", body: JSON.stringify({ target_price: price }) });
+      setValue("");
+      onSaved();
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    try {
+      await api(`/targets/${spotifyId}`, { method: "DELETE" });
+      onSaved();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="panel cluster" onSubmit={save} style={{ marginBottom: 24, justifyContent: "space-between", gap: 12 }}>
+      <div style={{ flex: "1 1 240px" }}>
+        <span className="label">Prix cible</span>
+        <p style={{ margin: "4px 0 0", color: "var(--ink-2)" }}>
+          {current
+            ? `Les annonces livrées sous ${formatPrice(current)} sont signalées.`
+            : "Fixe le prix livré maximum que tu es prêt à payer : les annonces en dessous seront signalées."}
+        </p>
+      </div>
+      <div className="cluster">
+        <label className="field" style={{ width: 130 }}>
+          <span className="sr-only">Prix cible en euros</span>
+          <input
+            className="input"
+            inputMode="decimal"
+            placeholder={current ? String(current) : "ex. 40"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        <button type="submit" className="btn-secondary" disabled={busy || !value}>
+          {current ? "Modifier" : "Définir"}
+        </button>
+        {current && (
+          <button type="button" className="btn-secondary" onClick={remove} disabled={busy}>
+            Retirer
+          </button>
+        )}
+      </div>
+      {message && (
+        <p className="negative" role="alert" style={{ margin: 0, flexBasis: "100%" }}>
+          {message}
+        </p>
+      )}
+    </form>
+  );
+}
+
 export default function AlbumPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const library = useApi<{ albums: Album[] }>("/library/albums?limit=2000&include_singles=true");
@@ -140,6 +223,19 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
                   Fiche Discogs
                 </a>
               )}
+              {album && (
+                <a
+                  className="btn-secondary"
+                  href={`https://www.popsike.com/php/quicksearch.php?searchtext=${encodeURIComponent(
+                    `${album.primary_artist} ${album.title_clean}`,
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Historique des ventes aux enchères eBay (pressages de collection)"
+                >
+                  Voir sur Popsike
+                </a>
+              )}
               {album?.spotify_url && (
                 <a className="btn-secondary" href={album.spotify_url} target="_blank" rel="noopener noreferrer">
                   Écouter
@@ -168,6 +264,8 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
           <div className="figure">{offers.data ? offers.data.unreachable.length : "—"}</div>
         </div>
       </div>
+
+      <TargetPrice spotifyId={id} current={offers.data?.target_price ?? null} onSaved={offers.reload} />
 
       {grades.length > 0 && (
         <div className="panel" style={{ marginBottom: 24 }}>
