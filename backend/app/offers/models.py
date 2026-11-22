@@ -64,6 +64,8 @@ class ScoredListing(Listing):
     distance_km: float | None = None
     pickup_possible: bool = False
     components: dict[str, float] = {}  # détail du score par critère
+    grade: str | None = None  # état estimé, sur l'échelle Discogs (NM, VG+, VG…)
+    reference: float | None = None  # prix Discogs de comparaison pour CET état, port compris
     notes: list[str] = []
     also_on: list[str] = []  # même annonce repérée sur une autre plateforme (liens)
 
@@ -73,6 +75,7 @@ class AlbumListings(BaseModel):
     artist: str
     title: str
     discogs_reference: float | None = None  # prix Discogs typique livré (médiane des éditions + port)
+    discogs_by_condition: dict[str, float] = {}  # prix conseillés Discogs par état, hors port
     listings: list[ScoredListing]  # du meilleur score au moins bon
     unreachable: list[ScoredListing] = []  # ni livrable chez toi, ni dans ton rayon de main propre
     searches: list[PlatformSearch]

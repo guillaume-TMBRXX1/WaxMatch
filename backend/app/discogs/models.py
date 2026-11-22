@@ -48,4 +48,8 @@ class AlbumOffers(BaseModel):
     versions_checked: int = 0
     offers: list[VinylOffer] = []
     note: str = "Prix Discogs les plus bas, hors frais de port."
+    main_release_id: int | None = None  # édition la plus répandue (sert aux prix conseillés par état)
+    # Prix conseillés par état pour cette édition, hors port : {"M": 40, "NM": 32, "VG+": 24…}.
+    # None = pas encore demandé ; {} = indisponible (paramètres vendeur Discogs non remplis ?).
+    price_suggestions: dict[str, float] | None = None
     checked_at: float = Field(default_factory=time.time)

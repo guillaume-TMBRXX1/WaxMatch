@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { formatPrice } from "@/lib/format";
 import type { Album } from "@/lib/types";
 
-export function AlbumCard({ album }: { album: Album }) {
+export function AlbumCard({ album, bestPrice }: { album: Album; bestPrice?: number | null }) {
   const tag = album.styles[0] ?? album.genres[0];
   return (
     <Link href={`/album/${album.spotify_id}`} className="card card-link">
@@ -17,9 +18,10 @@ export function AlbumCard({ album }: { album: Album }) {
           {album.primary_artist}
           {album.release_year ? ` · ${album.release_year}` : ""}
         </span>
-        {tag && (
+        {(tag || bestPrice != null) && (
           <span className="cluster" style={{ marginTop: 8 }}>
-            <span className="pill">{tag}</span>
+            {bestPrice != null && <span className="pill premium">dès {formatPrice(bestPrice)}</span>}
+            {tag && <span className="pill">{tag}</span>}
           </span>
         )}
       </div>

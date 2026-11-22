@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use } from "react";
+import { use, useState } from "react";
 import { ErrorState } from "@/components/States";
 import { useApi } from "@/lib/api";
 import { formatDelta, formatPrice, PLATFORM_LABEL } from "@/lib/format";
@@ -16,8 +16,9 @@ const COMPONENT_LABEL: Record<string, string> = {
 };
 
 function ListingRow({ listing, reference, first }: { listing: Listing; reference: number | null; first: boolean }) {
-  const delta = reference && listing.delivered_total ? formatDelta(listing.delivered_total / reference) : null;
-  const hot = reference != null && listing.delivered_total != null && listing.delivered_total <= reference * 0.7;
+  const ref = listing.reference ?? reference; // cote Discogs de l'état de l'annonce si connue
+  const delta = ref && listing.delivered_total ? formatDelta(listing.delivered_total / ref) : null;
+  const hot = ref != null && listing.delivered_total != null && listing.delivered_total <= ref * 0.7;
   return (
     <article className={`card${first ? " featured" : ""}${hot ? " hot" : ""}`}>
       <div className="deal-row">
@@ -33,6 +34,7 @@ function ListingRow({ listing, reference, first }: { listing: Listing; reference
             <span className="pill">{PLATFORM_LABEL[listing.platform]}</span>
             {listing.format_hint && <span className="pill">{listing.format_hint}</span>}
             {listing.condition && <span className="pill">{listing.condition}</span>}
+            {listing.grade && <span className="pill">≈ {listing.grade}</span>}
           </div>
           <a href={listing.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
             <span className="album-title" style={{ fontSize: 20 }}>
@@ -85,7 +87,9 @@ function ListingRow({ listing, reference, first }: { listing: Listing; reference
 export default function AlbumPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const library = useApi<{ albums: Album[] }>("/library/albums?limit=2000&include_singles=true");
-  const offers = useApi<AlbumListings>(`/offers/albums/${id}`);
+  const [refresh, setRefresh] = useState(0);
+  const offers = useApi<AlbumListings>(`/offers/albums/${id}${refresh ? `?refresh=true&r=${refresh}` : ""}`);
+  const grades = Object.entries(offers.data?.discogs_by_condition ?? {});
   const album = library.data?.albums.find((a) => a.spotify_id === id);
 
   if (offers.error?.status === 401) return <ErrorState error={offers.error} />;
@@ -147,6 +151,35 @@ export default function AlbumPage({ params }: { params: Promise<{ id: string }> 
           <span className="label">Inaccessibles</span>
           <div className="figure">{offers.data ? offers.data.unreachable.length : "—"}</div>
         </div>
+      </div>
+
+      {grades.length > 0 && (
+        <div className="panel" style={{ marginBottom: 24 }}>
+          <span className="label">Cote Discogs par état (hors port, édition la plus répandue)</span>
+          <div className="cluster" style={{ marginTop: 10, gap: 18 }}>
+            {grades.map(([grade, value]) => (
+              <div key={grade}>
+                <span className="label">{grade}</span>
+                <div className="figure" style={{ fontSize: 28 }}>
+                  {formatPrice(value)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="cluster" style={{ justifyContent: "space-between", marginBottom: 16 }}>
+        <h2>Offres</h2>
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={offers.loading}
+          onClick={() => setRefresh(Date.now())}
+          title="Interroge à nouveau Vinted et 2ememain (≈ 0,005 $)"
+        >
+          {offers.loading ? "Recherche…" : "Relancer la recherche"}
+        </button>
       </div>
 
       {offers.error ? (

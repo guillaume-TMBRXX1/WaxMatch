@@ -318,6 +318,7 @@ async def album_offers(client: DiscogsClient, match: DiscogsMatch, max_versions:
     else:
         versions = [{"id": match.id, "title": match.title}]
 
+    main_release_id = int(versions[0]["id"]) if versions else None
     stats = await asyncio.gather(*(client.marketplace_stats(int(v["id"])) for v in versions))
     offers = [_offer(v, s) for v, s in zip(versions, stats)]
     offers.sort(key=lambda o: (o.lowest_price is None, o.lowest_price or 0))
@@ -329,4 +330,31 @@ async def album_offers(client: DiscogsClient, match: DiscogsMatch, max_versions:
         total_for_sale=sum(o.num_for_sale for o in offers),
         versions_checked=len(offers),
         offers=offers,
+        main_release_id=main_release_id,
+        price_suggestions=await fetch_price_suggestions(client, main_release_id),
     )
+
+
+_GRADE = re.compile(r"\(([^)]+)\)\s*$")
+
+
+def parse_price_suggestions(raw: dict) -> dict[str, float]:
+    """{"Very Good Plus (VG+)": {"value": 24.5, ...}} -> {"VG+": 24.5} ; "NM or M-" -> "NM"."""
+    result: dict[str, float] = {}
+    for label, data in (raw or {}).items():
+        found = _GRADE.search(label)
+        if not found or not isinstance(data, dict) or data.get("value") is None:
+            continue
+        grade = found.group(1).split(" or ")[0].strip()
+        result[grade] = round(float(data["value"]), 2)
+    return result
+
+
+async def fetch_price_suggestions(client: DiscogsClient, release_id: int | None) -> dict[str, float]:
+    if release_id is None:
+        return {}
+    try:
+        return parse_price_suggestions(await client.price_suggestions(release_id))
+    except DiscogsError as exc:
+        log.info("Prix conseillés Discogs indisponibles (%s) : paramètres vendeur remplis ?", exc)
+        return {}

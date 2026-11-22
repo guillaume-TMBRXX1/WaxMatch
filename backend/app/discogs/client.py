@@ -85,3 +85,10 @@ class DiscogsClient:
 
     async def marketplace_stats(self, release_id: int) -> dict | None:
         return await self.get(f"/marketplace/stats/{release_id}", params={"curr_abbr": self.currency})
+
+    async def price_suggestions(self, release_id: int) -> dict:
+        """Prix conseillés par état (M, NM, VG+…) pour une édition, dans la devise vendeur du compte.
+
+        Exige que les « paramètres vendeur » du compte Discogs soient remplis ; sinon réponse vide.
+        """
+        return await self.get(f"/marketplace/price_suggestions/{release_id}") or {}

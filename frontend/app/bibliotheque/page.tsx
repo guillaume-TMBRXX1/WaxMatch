@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { AlbumCard } from "@/components/AlbumCard";
 import { EmptyState, ErrorState, GridSkeleton } from "@/components/States";
 import { useApi } from "@/lib/api";
-import type { Album } from "@/lib/types";
+import type { Album, BestRow } from "@/lib/types";
 
 const SORTS = [
   { value: "added_at", label: "Récents" },
@@ -23,6 +23,11 @@ export default function LibraryPage() {
   const params = new URLSearchParams({ sort, limit: "2000" });
   if (genre) params.set("genre", genre);
   const albums = useApi<{ total: number; albums: Album[] }>(`/library/albums?${params}`);
+  const best = useApi<{ albums: BestRow[] }>("/offers/best?sort=price&limit=500");
+  const bestPrice = useMemo(
+    () => new Map((best.data?.albums ?? []).map((r) => [r.spotify_id, r.best.delivered_total])),
+    [best.data],
+  );
   const genres = useApi<{ genres: { name: string; albums: number }[]; styles: { name: string; albums: number }[] }>(
     "/library/genres",
   );
@@ -43,7 +48,10 @@ export default function LibraryPage() {
         <h1 className="page-title" style={{ marginTop: 10 }}>
           Ma bibliothèque
         </h1>
-        <p className="subtitle">Tes albums Spotify, enrichis des genres et styles Discogs.</p>
+        <p className="subtitle">
+          Tes albums Spotify, enrichis des genres et styles Discogs. Clique sur un album pour chercher ses offres
+          vinyles.
+        </p>
       </section>
 
       <div className="stack" style={{ marginBottom: 24 }}>
@@ -95,7 +103,7 @@ export default function LibraryPage() {
       ) : (
         <div className="grid-albums">
           {visible.map((album) => (
-            <AlbumCard key={album.spotify_id} album={album} />
+            <AlbumCard key={album.spotify_id} album={album} bestPrice={bestPrice.get(album.spotify_id)} />
           ))}
         </div>
       )}

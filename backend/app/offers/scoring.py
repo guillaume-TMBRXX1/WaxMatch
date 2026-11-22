@@ -33,6 +33,34 @@ def discogs_reference_price(offers: AlbumOffers | None) -> float | None:
     return round(median(prices) + DISCOGS_SHIPPING_ESTIMATE, 2)
 
 
+# État de l'annonce -> échelle Discogs (Goldmine). Inconnu : VG, hypothèse prudente pour de l'occasion.
+_GRADES = [
+    (re.compile(r"blister|scell|sealed|sous cello"), "M"),
+    (re.compile(r"neuf|new|mint"), "NM"),
+    (re.compile(r"tres bon|excellent|comme neuf|nickel"), "VG+"),
+    (re.compile(r"bon etat|\bbon\b|good"), "VG"),
+    (re.compile(r"satisfaisant|correct|usage|use|abime"), "G+"),
+]
+GRADE_FALLBACK = {"M": ["M", "NM"], "NM": ["NM", "M", "VG+"], "VG+": ["VG+", "VG"], "VG": ["VG", "VG+"],
+                  "G+": ["G+", "G", "VG"]}
+
+
+def condition_grade(condition: str | None, title: str) -> str:
+    text = fold(f"{condition or ''} {title}")
+    for pattern, grade in _GRADES:
+        if pattern.search(text):
+            return grade
+    return "VG"
+
+
+def graded_reference(grade: str, suggestions: dict[str, float] | None) -> float | None:
+    """Prix conseillé Discogs pour cet état (ou l'état voisin), port estimé compris."""
+    for g in GRADE_FALLBACK.get(grade, [grade]):
+        if suggestions and suggestions.get(g):
+            return round(suggestions[g] + DISCOGS_SHIPPING_ESTIMATE, 2)
+    return None
+
+
 _CONDITION = [
     (re.compile(r"neuf|blister|scell"), 100),
     (re.compile(r"tres bon"), 85),
@@ -99,6 +127,7 @@ def score_listings(
     settings: UserSettings,
     discogs_reference: float | None = None,
     now: datetime | None = None,
+    price_suggestions: dict[str, float] | None = None,
 ) -> tuple[list[ScoredListing], list[ScoredListing]]:
     """Renvoie (annonces classées du meilleur au moins bon, annonces inaccessibles)."""
     now = now or datetime.now()
@@ -152,6 +181,10 @@ def score_listings(
     weights = settings.weights
     radius = max(settings.pickup_radius_km, 1)
     for c in candidates:
+        # Référence propre à l'état de l'annonce (prix conseillé Discogs), sinon référence générale.
+        c.grade = condition_grade(c.condition, c.title)
+        graded = graded_reference(c.grade, price_suggestions)
+        c.reference = graded or discogs_reference
         if c.pickup_possible:
             proximity = 100 - 30 * (c.distance_km or 0) / radius
         elif c.distance_km is not None and c.distance_km <= radius * 3:
@@ -163,7 +196,7 @@ def score_listings(
         )
         components = {
             "price": round(100 * best_price / c.delivered_total, 1) if c.delivered_total else 0.0,
-            "deal": round(deal_score(c.delivered_total, discogs_reference), 1),
+            "deal": round(deal_score(c.delivered_total, c.reference), 1),
             "proximity": round(proximity, 1),
             "trust": round((condition_score(c.condition, c.title) + seller) / 2, 1),
             # Vinted : les anciens résultats en cache portaient la date de collecte, pas de publication.
@@ -171,14 +204,16 @@ def score_listings(
         }
         c.components = components
         c.score = round(sum(components[k] * weights[k] for k in weights) / 100, 1)
-        if discogs_reference and c.delivered_total <= discogs_reference * 0.7:
-            c.notes.append(f"Bonne affaire : {round(100 * (1 - c.delivered_total / discogs_reference))} % sous Discogs")
-        elif discogs_reference and c.delivered_total >= discogs_reference * 1.2:
-            ref = f"{discogs_reference:.2f}".replace(".", ",")
-            c.notes.append(
-                f"Plus cher que sur Discogs (+{round(100 * (c.delivered_total / discogs_reference - 1))} % ; "
-                f"Discogs ~{ref} € livré)"
-            )
+        ref = c.reference
+        under = f"sous la cote Discogs {c.grade}" if graded else "sous Discogs"
+        over = f"Plus cher que la cote Discogs {c.grade}" if graded else "Plus cher que sur Discogs"
+        if ref and c.delivered_total <= ref * 0.7:
+            c.notes.append(f"Bonne affaire : {round(100 * (1 - c.delivered_total / ref))} % {under}")
+        elif ref and c.delivered_total >= ref * 1.2:
+            pct = round(100 * (c.delivered_total / ref - 1))
+            c.notes.append(f"{over} (+{pct} % ; Discogs ~{ref:.2f} € livré)".replace(".", ","))
+        elif graded:
+            c.notes.append(f"Au prix de la cote Discogs {c.grade} (~{ref:.2f} € livré)".replace(".", ","))
 
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates, unreachable
