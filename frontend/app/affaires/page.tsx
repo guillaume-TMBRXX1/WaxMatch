@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { DealCard } from "@/components/DealCard";
 import { EmptyState, ErrorState } from "@/components/States";
 import { api, ApiError, useApi } from "@/lib/api";
+import { useFavorites } from "@/lib/favorites";
 import type { BestRow, ScanStatus } from "@/lib/types";
 
 const SORTS = [
@@ -19,6 +20,7 @@ export default function DealsPage() {
   const [scanError, setScanError] = useState<string | null>(null);
   const best = useApi<{ total: number; albums: BestRow[] }>(`/offers/best?sort=${sort}&limit=200`);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fav = useFavorites();
 
   function poll() {
     if (timer.current) clearInterval(timer.current);
@@ -169,7 +171,13 @@ export default function DealsPage() {
       ) : (
         <div className="stack">
           {rows.map((row, i) => (
-            <DealCard key={row.spotify_id} row={row} featured={i === 0 && sort === "deal"} />
+            <DealCard
+              key={row.spotify_id}
+              row={row}
+              featured={i === 0 && sort === "deal"}
+              favorite={fav.isFavorite(row.best)}
+              onToggleFavorite={() => fav.toggle(row.spotify_id, row.best)}
+            />
           ))}
         </div>
       )}

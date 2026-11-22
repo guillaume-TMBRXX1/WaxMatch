@@ -1,12 +1,24 @@
 import Link from "next/link";
+import { FavoriteButton } from "./FavoriteButton";
 import { formatDelta, formatPrice, PLATFORM_LABEL } from "@/lib/format";
 import type { BestRow } from "@/lib/types";
 
-export function DealCard({ row, featured = false }: { row: BestRow; featured?: boolean }) {
+export function DealCard({
+  row,
+  featured = false,
+  favorite,
+  onToggleFavorite,
+}: {
+  row: BestRow;
+  featured?: boolean;
+  favorite?: boolean;
+  onToggleFavorite?: () => void;
+}) {
   const delta = formatDelta(row.vs_discogs);
   const hot = row.vs_discogs != null && row.vs_discogs <= 0.7;
   const best = row.best;
   return (
+    <div style={{ position: "relative" }}>
     <Link
       href={`/album/${row.spotify_id}`}
       className={`card card-link${featured ? " featured" : ""}${hot ? " hot" : ""}`}
@@ -47,5 +59,9 @@ export function DealCard({ row, featured = false }: { row: BestRow; featured?: b
         </div>
       </div>
     </Link>
+    {onToggleFavorite && (
+      <FavoriteButton active={Boolean(favorite)} onToggle={onToggleFavorite} style={{ position: "absolute", top: 10, left: 10 }} />
+    )}
+    </div>
   );
 }

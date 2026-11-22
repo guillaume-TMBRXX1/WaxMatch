@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 export const NAV_ITEMS = [
-  { href: "/", label: "Accueil" },
-  { href: "/bibliotheque", label: "Bibliothèque" },
-  { href: "/affaires", label: "Affaires" },
-  { href: "/reglages", label: "Réglages" },
+  { href: "/", label: "Accueil", short: "Accueil" },
+  { href: "/bibliotheque", label: "Bibliothèque", short: "Biblio" },
+  { href: "/affaires", label: "Affaires", short: "Affaires" },
+  { href: "/favoris", label: "Favoris", short: "Favoris" },
+  { href: "/reglages", label: "Réglages", short: "Réglages" },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -33,7 +34,7 @@ export function MobileNav() {
     <nav className="nav-mobile glass" aria-label="Navigation">
       {NAV_ITEMS.map((item) => (
         <Link key={item.href} href={item.href} aria-current={isActive(pathname, item.href) ? "page" : undefined}>
-          {item.label}
+          {item.short}
         </Link>
       ))}
     </nav>

@@ -12,7 +12,8 @@ from app.discogs.client import RateLimiter
 from app.discogs.service import DiscogsStore, EnrichJob
 from app.offers.service import OffersStore, ScanJob
 from app.geo import Geocoder
-from app.routers import auth, discogs, library, offers, settings as settings_router
+from app.favorites import FavoritesStore
+from app.routers import auth, discogs, favorites, library, offers, settings as settings_router
 from app.user_settings import SettingsStore
 from app.repos import PostgresLibraryRepo
 from app.store import InMemoryTokenStore, PostgresTokenStore, TokenStore
@@ -40,6 +41,7 @@ def create_app(
         app.state.offers_store = OffersStore(pool)
         await app.state.offers_store.load()
         app.state.settings_store = SettingsStore(pool)
+        app.state.favorites_store = FavoritesStore(pool)
         app.state.geocoder = Geocoder(app.state.http, settings.geocoder_user_agent, pool)
         await app.state.geocoder.load()
         yield
@@ -84,6 +86,7 @@ def create_app(
     app.include_router(discogs.router)
     app.include_router(offers.router)
     app.include_router(settings_router.router)
+    app.include_router(favorites.router)
 
     @app.get("/health", tags=["meta"])
     async def health():
