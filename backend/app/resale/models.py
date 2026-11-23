@@ -37,7 +37,14 @@ class ResaleSettings(BaseModel):
                                  "vinyle rnb"]
     )
     sweep_max_items: int = Field(100, ge=10, le=500, description="Annonces récupérées par recherche de balayage")
-    verify_top: int = Field(5, ge=0, le=50, description="Opportunités vérifiées ensuite avec des annonces comparables")
+    verify_top: int = Field(8, ge=0, le=50, description="Disques prometteurs vérifiés avec une recherche Vinted dédiée")
+    # Revente sur Vinted : seule la preuve par les prix Vinted compte.
+    require_vinted_comparables: bool = Field(True, description="Exiger des annonces Vinted comparables")
+    min_comparables: int = Field(3, ge=1, le=20)
+    # Découverte : annonce d'un artiste suivi pour un album absent de la liste -> recherche Discogs.
+    discover_new_albums: bool = True
+    discovery_min_want: int = Field(150, ge=0, description="Demande minimum (want Discogs) d'un album découvert")
+    discovery_max_lookups: int = Field(40, ge=0, le=300, description="Recherches Discogs de découverte par balayage")
 
 
 class WatchItem(BaseModel):
@@ -53,6 +60,7 @@ class WatchItem(BaseModel):
     have: int = 0
     demand: float = 0  # score de demande (want, rareté)
     last_scanned: float | None = None
+    discovered: bool = False  # ajouté automatiquement lors d'un balayage
 
 
 class Comparable(BaseModel):

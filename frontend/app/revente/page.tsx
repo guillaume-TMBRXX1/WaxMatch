@@ -130,6 +130,11 @@ function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decis
           <ul className="notes">
             <li>Achat {formatPrice(opp.buy_total)} → revente ~{formatPrice(opp.resale_estimate)}</li>
             {opp.vinted_median != null && <li>Médiane Vinted {formatPrice(opp.vinted_median)}</li>}
+            {opp.vinted_median != null && l.total_known != null && (
+              <li style={{ fontWeight: 700, color: "var(--ink)" }}>
+                Prix {Math.round((1 - l.total_known / opp.vinted_median) * 100)} % sous la médiane Vinted
+              </li>
+            )}
             {opp.risks.map((r) => (
               <li key={r} style={{ color: "var(--ochre)" }}>⚠ {r}</li>
             ))}
@@ -238,6 +243,8 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
       <div className="stack" style={{ gap: 10 }}>
         {(
           [
+            ["require_vinted_comparables", "Exiger des annonces Vinted comparables", "revente sur Vinted : seule la preuve par les prix Vinted compte"],
+            ["discover_new_albums", "Découvrir des albums", "annonce d'un artiste suivi, album absent de la liste : recherche Discogs"],
             ["require_confirmed_vinyl", "Exiger une preuve que c'est un vinyle", "mention vinyle/LP/33t ou catégorie vinyles"],
             ["exclude_mixed", "Écarter les annonces mixtes", "vinyle + CD, goodies, poster…"],
             ["allow_no_sleeve", "Accepter les disques sans pochette", "forte décote à la revente"],
@@ -279,6 +286,22 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
           </button>
         ))}
       </div>
+      <label className="field">
+        <span className="label">Recherches du balayage large (séparées par des virgules)</span>
+        <textarea
+          className="input"
+          rows={3}
+          style={{ borderRadius: 16, padding: "10px 16px", minHeight: 80 }}
+          value={form.sweep_queries.join(", ")}
+          onChange={(e) =>
+            setForm({ ...form, sweep_queries: e.target.value.split(",").map((q) => q.trim()).filter(Boolean) })
+          }
+        />
+        <span style={{ color: "var(--ink-2)", fontSize: 12.5 }}>
+          Chaque recherche coûte 1 recherche Apify par plateforme. Idées : labels (« vinyle stax », « vinyle motown »,
+          « vinyle philadelphia »), mots de vendeurs (« 33 tours soul », « disque funk original »).
+        </span>
+      </label>
       <p className="subtitle" style={{ margin: 0 }}>
         Styles surveillés : {form.styles.join(", ")} · genres secondaires : {form.extra_genres.join(", ")}
       </p>
@@ -414,6 +437,7 @@ export default function ResalePage() {
               <>
                 <p style={{ margin: "6px 0 10px" }}>
                   {job!.phase} · {job!.done}/{job!.total} · {job!.new_opportunities} nouvelles opportunités
+                  {job!.discovered ? ` · ${job!.discovered} albums découverts` : ""}
                 </p>
                 <div className="meter" aria-hidden="true">
                   <span style={{ width: `${job!.total ? (100 * job!.done) / job!.total : 5}%` }} />
@@ -530,6 +554,7 @@ export default function ResalePage() {
                 <span style={{ fontWeight: 700 }}>
                   {w.artist} — {w.title}
                   {w.year ? ` (${w.year})` : ""}
+                  {w.discovered ? " · découvert" : ""}
                 </span>
                 <span className="label">
                   {w.want} want · {w.have} have{w.last_scanned ? " · analysé" : ""}
