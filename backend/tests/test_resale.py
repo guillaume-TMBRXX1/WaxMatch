@@ -177,8 +177,14 @@ def test_daily_apify_cap_keeps_ebay_only():
         client.post("/resale/scan")
         status = _wait(client)
         assert world.apify_calls == 0 and status["apify_runs"] == 0
-        # Sans comparables Vinted, la cote Discogs seule sert de référence : l'opportunité eBay est trouvée.
-        assert status["new_opportunities"] == 1
+        # Revente sur Vinted : sans annonces Vinted comparables, pas d'opportunité (la cote Discogs ne suffit pas).
+        assert status["new_opportunities"] == 0
+        assert client.get("/resale/status").json()["filtered"] == {"comparables Vinted insuffisants": 1}
+        # Si l'utilisateur l'autorise, la cote Discogs seule sert de référence.
+        client.put("/resale/settings", json={**settings, "daily_apify_runs": 0, "require_vinted_comparables": False})
+        client.app.state.offers_store.searches.clear()
+        client.post("/resale/scan")
+        assert _wait(client)["new_opportunities"] == 1
 
 
 def test_opportunity_details_and_triage():
@@ -285,3 +291,73 @@ def test_daily_counter_follows_brussels_time(monkeypatch):
     store.meta["usage:2026-11-22"] = {"apify_runs": 30}  # quota consommé la veille
     assert store.today().isoformat() == "2026-11-23"
     assert store.apify_runs_today() == 0
+
+
+def test_listing_at_vinted_market_price_is_not_an_opportunity():
+    """Cas réel : l'annonce est au prix des autres annonces Vinted du même disque -> pas d'affaire."""
+    world = FakeWorld()
+    world.ebay_items = []
+
+    def handler(request):
+        if request.url.host == "api.apify.com":
+            world.apify_calls += 1
+            body = json.loads(request.content)
+            if body.get("searchQueries") == ["James Brown The Payback vinyle"]:  # vérification : marché à ~40 €
+                return httpx.Response(201, json=[
+                    {"id": 70 + i, "title": "James Brown The Payback vinyle", "url": f"https://v/{70 + i}",
+                     "price": p, "totalPrice": p + 2, "currency": "EUR", "condition": "Très bon état", "photos": []}
+                    for i, p in enumerate([39, 40, 41])
+                ])
+            if "vinted" in request.url.path and body.get("searchQueries") == ["vinyle soul"]:
+                return httpx.Response(201, json=[
+                    {"id": 900, "title": "James Brown The Payback vinyle", "url": "https://v/900", "price": 39,
+                     "totalPrice": 41.2, "currency": "EUR", "condition": "Très bon état", "photos": []}])
+            return httpx.Response(201, json=[])
+        return world(request)
+
+    with TestClient(_app(handler), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        # Conversion Discogs -> Vinted généreuse (VG+ 45 € × 1,2 = 54 €) : sur la cote seule, on aurait cru à une
+        # affaire ; la vérification par les prix Vinted (marché à ~40 €) montre que non.
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"], "min_margin": 2, "min_roi": 0.0,
+                                             "discogs_to_vinted": 1.2})
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert status["new_opportunities"] == 0
+        assert status["filtered"].get("marge insuffisante") == 1
+
+
+def test_sweep_discovers_albums_of_watched_artists():
+    world = FakeWorld()
+    world.ebay_items = []
+    SEX_MACHINE = {"type": "master", "id": 600, "title": "James Brown - Sex Machine", "year": "1970",
+                   "genre": ["Funk / Soul"], "style": ["Funk"], "community": {"want": 2000, "have": 4000}}
+
+    def handler(request):
+        if request.url.host == "api.discogs.com" and request.url.path == "/database/search" and request.url.params.get("q"):
+            assert request.url.params["q"] == "james brown sex machine"
+            return httpx.Response(200, json={"results": [SEX_MACHINE]})
+        if request.url.host == "api.apify.com":
+            world.apify_calls += 1
+            body = json.loads(request.content)
+            if "vinted" in request.url.path and body.get("searchQueries") == ["vinyle soul"]:
+                return httpx.Response(201, json=[
+                    {"id": 910, "title": "James Brown Sex Machine 2LP vinyle", "url": "https://v/910", "price": 12,
+                     "totalPrice": 13.3, "currency": "EUR", "condition": "Très bon état", "photos": []}])
+            return httpx.Response(201, json=[])
+        return world(request)
+
+    with TestClient(_app(handler), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"]})
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert status["discovered"] == 1
+        keys = {w["key"]: w for w in client.get("/resale/watchlist").json()}
+        assert keys["james brown|sex machine"]["discovered"] is True

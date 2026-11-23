@@ -20,6 +20,7 @@ from app.offers.quality import assess_quality, grade_at_least
 from app.resale.evaluate import resale_estimate, risks_for
 from app.resale.models import Comparable, Opportunity, WatchItem
 from app.resale.store import ResaleStore
+from app.resale.watchlist import item_from_result
 from app.spotify.normalize import LibraryAlbum
 from app.user_settings import APIFY_PLATFORMS, UserSettings
 
@@ -51,6 +52,7 @@ class ResaleJob:
     gone: int = 0
     apify_runs: int = 0
     errors: int = 0
+    discovered: int = 0  # albums ajoutés à la liste lors du balayage
     last_error: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
@@ -126,6 +128,9 @@ async def evaluate_candidates(
             job.filtered[reason] = job.filtered.get(reason, 0) + 1
             continue
         comps = [c for c in comparables if c.url != listing.url]
+        if rs.require_vinted_comparables and len(comps) < rs.min_comparables:
+            job.filtered["comparables Vinted insuffisants"] = job.filtered.get("comparables Vinted insuffisants", 0) + 1
+            continue
         value, basis, grade = resale_estimate(listing, suggestions, [c.price for c in comps], rs)
         if value is None:
             job.filtered["pas de référence de prix"] = job.filtered.get("pas de référence de prix", 0) + 1
@@ -214,17 +219,23 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
 
 
 async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
-    """Balayage large : quelques recherches par style (dernières annonces), comparées à toute la liste,
-    puis vérification des meilleures trouvailles avec des annonces Vinted comparables."""
+    """Balayage large : quelques recherches par style (dernières annonces), rapprochées de la liste de
+    surveillance (et d'albums découverts), puis vérification par les prix Vinted AVANT de proposer quoi que ce soit."""
     rs = ctx.resale.settings
     job.running, job.phase, job.started_at = True, "balayage des annonces", time.time()
     try:
         listings = await _sweep_listings(ctx, job, rs)
         job.phase = "rapprochement avec la liste de surveillance"
         matches = _match_watchlist(ctx, listings)
+        if rs.discover_new_albums and ctx.discogs is not None:
+            job.phase = "découverte d'albums (Discogs)"
+            matched_ids = {id(l) for found in matches.values() for l in found}
+            await _discover(ctx, job, rs, [l for l in listings if id(l) not in matched_ids], matches)
         job.total = len(matches)
-        job.phase = "évaluation"
-        new: list[tuple[WatchItem, Opportunity]] = []
+
+        # 1) Préparation : prix livré, comparables déjà connus, potentiel (cote Discogs) pour prioriser.
+        job.phase = "préparation"
+        prepared = []
         for key, found in matches.items():
             item = ctx.resale.watchlist[key]
             try:
@@ -235,16 +246,93 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
                 )
                 cached = ctx.offers.get("vinted", key, 7 * 24 * 3600)
                 comps = _comparables(found + (cached.listings if cached else []))
-                for opp, is_new in await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage"):
-                    if is_new:
-                        new.append((item, opp))
+                prepared.append([item, offers, ranked, comps, _potential(ranked, offers, rs)])
             except Exception as exc:  # noqa: BLE001
                 job.errors += 1
                 job.last_error = str(exc)[:200]
+
+        # 2) Vérification : pour les disques prometteurs sans assez de comparables, recherche Vinted dédiée.
+        to_verify = sorted(
+            (p for p in prepared if len(p[3]) < rs.min_comparables and p[4] >= rs.min_margin),
+            key=lambda p: p[4], reverse=True,
+        )[: rs.verify_top]
+        for entry in to_verify:
+            if ctx.apify is None or ctx.resale.apify_runs_today() >= rs.daily_apify_runs:
+                job.last_error = "Plafond Apify atteint : vérification partielle"
+                break
+            job.phase = "vérification par les prix Vinted"
+            settings = ctx.user_settings.model_copy(update={"platforms": ["vinted"]})
+            result = await album_listings(ctx.apify, ctx.offers, to_album(entry[0]), settings, ctx.max_items, ctx.cache_hours)
+            if any(not s.from_cache for s in result.searches):
+                await ctx.resale.add_apify_runs(1)
+                job.apify_runs += 1
+            seen = {c.url for c in entry[3]}
+            entry[3] = entry[3] + [c for c in _comparables([l for s in result.searches for l in s.listings]) if c.url not in seen]
+
+        # 3) Évaluation, avec les comparables Vinted exigés.
+        job.phase = "évaluation"
+        for item, offers, ranked, comps, _ in prepared:
+            await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage")
             job.done += 1
-        await _verify(ctx, job, rs, new)
     finally:
         job.running, job.phase, job.finished_at = False, "terminé", time.time()
+
+
+def _potential(ranked, offers: AlbumOffers | None, rs) -> float:
+    """Meilleure marge possible d'après la cote Discogs : sert seulement à choisir quoi vérifier."""
+    from app.resale.evaluate import graded_price
+
+    suggestions = offers.price_suggestions if offers else None
+    best = -1e9
+    for listing in ranked:
+        cote = graded_price(listing.grade or "VG", suggestions)
+        if cote and listing.delivered_total is not None:
+            best = max(best, cote * rs.discogs_to_vinted - listing.delivered_total - rs.packaging)
+    return best
+
+
+_GENERIC_WORDS = set(
+    "vinyle vinyles vinyl vinyls lp lps 2lp 3lp ep maxi 33t 45t 33 45 tours tour rpm disque disques album original originale "
+    "pressage press edition reissue neuf tres bon etat used de du des la le les et the a".split()
+)
+
+
+async def _discover(ctx: ResaleContext, job: ResaleJob, rs, listings: list, matches: dict[str, list]) -> None:
+    """Annonce d'un artiste suivi pour un album absent de la liste : recherche Discogs, ajout si demandé."""
+    artists = {artist_key(i.artist) for i in ctx.resale.watchlist.values() if artist_key(i.artist)}
+    queries: dict[str, list[dict]] = {}
+    lookups = 0
+    for listing in listings:
+        quality = assess_quality(listing)
+        if quality.blocking or not quality.confirmed:
+            continue
+        text = fold(listing.title)
+        if not any(f" {a} " in f" {text} " for a in artists):
+            continue
+        query = " ".join(w for w in text.split() if w not in _GENERIC_WORDS and not w.isdigit())
+        if query not in queries:
+            if lookups >= rs.discovery_max_lookups:
+                continue
+            lookups += 1
+            try:
+                queries[query] = await ctx.discogs.search(q=query, type="master", format="Vinyl", per_page=5)
+            except Exception as exc:  # noqa: BLE001
+                job.errors += 1
+                job.last_error = str(exc)[:200]
+                queries[query] = []
+        for result in queries[query]:
+            item = item_from_result(result)
+            if item is None or item.want < rs.discovery_min_want:
+                continue
+            if item.key not in ctx.resale.watchlist:
+                if not judge(to_album(item), listing)[0]:
+                    continue
+                item.discovered = True
+                await ctx.resale.save_item(item)
+                job.discovered += 1
+            if judge(to_album(ctx.resale.watchlist[item.key]), listing)[0]:
+                matches.setdefault(item.key, []).append(listing)
+                break
 
 
 async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:
@@ -302,26 +390,6 @@ def _match_watchlist(ctx: ResaleContext, listings: list) -> dict[str, list]:
                 matches.setdefault(item.key, []).append(listing)
                 break
     return matches
-
-
-async def _verify(ctx: ResaleContext, job: ResaleJob, rs, new: list[tuple[WatchItem, Opportunity]]) -> None:
-    """Vérifie les meilleures nouvelles trouvailles : annonces Vinted comparables du même disque."""
-    todo = [(i, o) for i, o in sorted(new, key=lambda x: x[1].margin, reverse=True) if len(o.comparables) < 3]
-    for item, opp in todo[: rs.verify_top]:
-        if ctx.apify is None or ctx.resale.apify_runs_today() >= rs.daily_apify_runs:
-            return
-        job.phase = "vérification des meilleures trouvailles"
-        settings = ctx.user_settings.model_copy(update={"platforms": ["vinted"]})
-        result = await album_listings(ctx.apify, ctx.offers, to_album(item), settings, ctx.max_items, ctx.cache_hours)
-        if any(not s.from_cache for s in result.searches):
-            await ctx.resale.add_apify_runs(1)
-            job.apify_runs += 1
-        comps = _comparables([l for s in result.searches for l in s.listings])
-        offers = ctx.discogs_store.get_offers(item.key)
-        kept = await evaluate_candidates(ctx, item, [opp.listing], comps, offers, job, opp.source)
-        if not kept:  # la vérification montre que la revente était surestimée
-            await ctx.resale.remove(opp.key)
-            job.new_opportunities -= 1
 
 
 def quality_rejection(listing, rs) -> str | None:

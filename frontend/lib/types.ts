@@ -150,6 +150,7 @@ export interface WatchItem {
   have: number;
   demand: number;
   last_scanned: number | null;
+  discovered?: boolean;
 }
 
 export interface ResaleSettings {
@@ -174,6 +175,11 @@ export interface ResaleSettings {
   sweep_queries: string[];
   sweep_max_items: number;
   verify_top: number;
+  require_vinted_comparables: boolean;
+  min_comparables: number;
+  discover_new_albums: boolean;
+  discovery_min_want: number;
+  discovery_max_lookups: number;
 }
 
 export interface ResaleStats {
@@ -210,6 +216,7 @@ export interface ResaleStatus {
   errors: number;
   last_error: string | null;
   filtered?: Record<string, number>;
+  discovered?: number;
   filtered_total?: number;
 }
 
