@@ -361,3 +361,73 @@ def test_sweep_discovers_albums_of_watched_artists():
         assert status["discovered"] == 1
         keys = {w["key"]: w for w in client.get("/resale/watchlist").json()}
         assert keys["james brown|sex machine"]["discovered"] is True
+
+
+def test_budget_in_dollars_and_pistes():
+    """Facturation au résultat : budget en dollars ; disques sans comparables -> pistes vérifiables à la demande."""
+    world = FakeWorld()
+    world.ebay_items = []
+
+    def handler(request):
+        if request.url.host == "api.apify.com":
+            world.apify_calls += 1
+            body = json.loads(request.content)
+            if body.get("searchQueries") == ["James Brown The Payback vinyle"]:  # vérification : marché à ~40 €
+                return httpx.Response(201, json=[
+                    {"id": 70 + i, "title": "James Brown The Payback vinyle", "url": f"https://v/{70 + i}",
+                     "price": p, "totalPrice": p + 2, "currency": "EUR", "condition": "Bon état", "photos": []}
+                    for i, p in enumerate([40, 38, 42])
+                ])
+            if "vinted" in request.url.path and body.get("searchQueries") == ["vinyle soul"]:
+                assert body["maxItems"] == 30  # balayage économe
+                return httpx.Response(201, json=[
+                    {"id": 900, "title": "James Brown The Payback vinyle 1973", "url": "https://v/900", "price": 9,
+                     "totalPrice": 10.1, "currency": "EUR", "condition": "Très bon état", "photos": []}])
+            return httpx.Response(201, json=[])
+        return world(request)
+
+    with TestClient(_app(handler), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        assert settings["daily_budget_usd"] == 0.15 and settings["sweep_max_items"] == 30
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"], "verify_top": 0})
+        stats = client.get("/resale/stats").json()
+        assert stats["sweep_cost_usd"] == 0.06  # 1 requête × 2 plateformes × 30 annonces × 1 $ / 1 000
+
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert status["new_opportunities"] == 0 and status["filtered"]["pistes à vérifier"] == 1
+        assert status["cost"] == 0.001  # une seule annonce renvoyée
+        piste = client.get("/resale/opportunities", params={"view": "pistes"}).json()[0]
+        assert piste["needs_check"] and "provisoire" in piste["resale_basis"]
+        assert client.get("/resale/opportunities").json() == []  # pas dans « À trier » tant que non vérifiée
+
+        verified = client.post(f"/resale/opportunities/{piste['key']}/verify").json()
+        assert verified["needs_check"] is False and verified["vinted_median"] == 40
+        assert client.get("/resale/opportunities").json()[0]["key"] == piste["key"]
+        stats = client.get("/resale/stats").json()
+        assert stats["spent_today"] == 0.004 and stats["spent_month"] == 0.004  # 1 + 3 annonces
+
+        # Budget épuisé : la vérification est refusée avec un message clair.
+        client.put("/resale/settings", json={**client.get("/resale/settings").json(), "daily_budget_usd": 0.0})
+        r = client.post(f"/resale/opportunities/{piste['key']}/verify")
+        assert r.status_code == 429 and "Budget Apify du jour atteint" in r.json()["detail"]
+
+
+def test_old_costly_settings_are_upgraded():
+    from app.resale.store import ResaleStore
+
+    store = ResaleStore()
+    store.meta["settings"] = {
+        "daily_apify_runs": 50, "sweep_max_items": 100, "verify_top": 8, "min_margin": 10,
+        "sweep_queries": ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro", "vinyle jazz funk", "vinyle rnb"],
+    }
+    s = store.settings
+    assert (s.sweep_max_items, s.verify_top, len(s.sweep_queries)) == (30, 3, 4)
+    assert s.daily_apify_runs == 50 and s.min_margin == 10  # choix personnels conservés
+    store.meta["settings"]["sweep_queries"] = ["vinyle stax"]
+    store.meta["settings"]["sweep_max_items"] = 50
+    s = store.settings
+    assert s.sweep_queries == ["vinyle stax"] and s.sweep_max_items == 50

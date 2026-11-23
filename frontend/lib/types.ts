@@ -126,6 +126,7 @@ export interface Opportunity {
   decision: "gardee" | "ecartee" | null;
   decision_reason: string | null;
   source: "disque" | "balayage";
+  needs_check?: boolean;
   buy_price: number | null;
   buy_fee: number | null;
   buy_shipping: number | null;
@@ -166,6 +167,9 @@ export interface ResaleSettings {
   discogs_to_vinted: number;
   platforms: ("vinted" | "2ememain" | "ebay" | "leboncoin")[];
   daily_apify_runs: number;
+  daily_budget_usd: number;
+  comparables_max_items: number;
+  comparables_cache_days: number;
   min_grade: "G+" | "VG" | "VG+" | "NM";
   require_confirmed_vinyl: boolean;
   allow_no_sleeve: boolean;
@@ -201,6 +205,11 @@ export interface ResaleStats {
   apify_daily_cap: number;
   apify_day?: string;
   sweep_cost?: number;
+  pistes?: number;
+  spent_today?: number;
+  spent_month?: number;
+  daily_budget?: number;
+  sweep_cost_usd?: number;
   ebay_configured: boolean;
 }
 
@@ -217,6 +226,7 @@ export interface ResaleStatus {
   last_error: string | null;
   filtered?: Record<string, number>;
   discovered?: number;
+  cost?: number;
   filtered_total?: number;
 }
 

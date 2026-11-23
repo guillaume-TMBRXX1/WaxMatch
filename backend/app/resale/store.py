@@ -31,7 +31,19 @@ class ResaleStore:
     # ------------------------------------------------------------------ réglages et compteurs
     @property
     def settings(self) -> ResaleSettings:
-        return ResaleSettings.model_validate(self.meta.get("settings") or {})
+        data = dict(self.meta.get("settings") or {})
+        if data and data.get("settings_version", 1) < 2:
+            # Réglages enregistrés avant la découverte de la facturation au résultat (~1 $ / 1 000 annonces) :
+            # on remplace les valeurs coûteuses par défaut, sans toucher aux choix personnalisés.
+            old_queries = ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro", "vinyle jazz funk", "vinyle rnb"]
+            if data.get("sweep_queries") == old_queries:
+                data.pop("sweep_queries")
+            if data.get("sweep_max_items", 100) >= 100:
+                data.pop("sweep_max_items", None)
+            if data.get("verify_top", 8) >= 8:
+                data.pop("verify_top", None)
+            data["settings_version"] = 2
+        return ResaleSettings.model_validate(data)
 
     async def _put_meta(self, key: str, data: dict) -> None:
         self.meta[key] = data
@@ -47,12 +59,33 @@ class ResaleStore:
     def today(self) -> date:
         return datetime.now(self.tz).date()
 
+    def _usage(self) -> dict:
+        return self.meta.get(f"usage:{self.today().isoformat()}") or {}
+
     def apify_runs_today(self) -> int:
-        return int((self.meta.get(f"usage:{self.today().isoformat()}") or {}).get("apify_runs", 0))
+        return int(self._usage().get("apify_runs", 0))
+
+    def spent_today(self) -> float:
+        return round(float(self._usage().get("cost", 0)), 4)
+
+    def spent_month(self) -> float:
+        prefix = f"usage:{self.today().isoformat()[:7]}"
+        return round(sum(float(v.get("cost", 0)) for k, v in self.meta.items() if k.startswith(prefix)), 4)
+
+    async def add_usage(self, runs: int, results: int = 0, cost: float = 0.0) -> None:
+        if runs or results:
+            u = self._usage()
+            await self._put_meta(
+                f"usage:{self.today().isoformat()}",
+                {
+                    "apify_runs": int(u.get("apify_runs", 0)) + runs,
+                    "results": int(u.get("results", 0)) + results,
+                    "cost": round(float(u.get("cost", 0)) + cost, 4),
+                },
+            )
 
     async def add_apify_runs(self, n: int) -> None:
-        if n:
-            await self._put_meta(f"usage:{self.today().isoformat()}", {"apify_runs": self.apify_runs_today() + n})
+        await self.add_usage(n)
 
     # ------------------------------------------------------------------ liste de surveillance
     async def replace_watchlist(self, items: list[WatchItem]) -> None:

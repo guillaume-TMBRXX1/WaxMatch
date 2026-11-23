@@ -114,7 +114,7 @@ export default function DealsPage() {
             ) : (
               <p style={{ margin: "6px 0 0", color: "var(--ink-2)" }}>
                 Analyse d&apos;abord les albums jamais analysés, puis les plus anciennement analysés : en
-                relançant, tu couvres toute ta bibliothèque (≈ 0,005 $ par album). Pour un album précis, ouvre sa
+                relançant, tu couvres toute ta bibliothèque (≈ 0,04 $ par album : Apify facture ~1 $ / 1 000 annonces). Pour un album précis, ouvre sa
                 fiche depuis la bibliothèque.
               </p>
             )}
