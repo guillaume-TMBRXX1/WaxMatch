@@ -132,6 +132,15 @@ def parse_2ememain(item: dict) -> Listing | None:
     )
 
 
+# Prix des Actors Apify, en dollars pour 1 000 annonces récupérées (facturation au résultat).
+# Valeur constatée sur la facture réelle (~1 $ / 1 000) ; à ajuster si l'Actor change de tarif.
+PRICE_PER_1000 = {"vinted": 1.0, "2ememain": 1.0, "leboncoin": 1.0}
+
+
+def run_cost(platform: str, results: int) -> float:
+    return round(PRICE_PER_1000.get(platform, 1.0) * results / 1000, 4)
+
+
 # Catégorie(s) « Vinyles » de Vinted (numéro visible dans l'adresse du catalogue : catalog[]=…).
 # Renseignée au démarrage depuis la configuration ; vide = recherche dans tout Vinted.
 VINTED_CATALOG_IDS: list[int] = []

@@ -12,7 +12,7 @@ from app.geo import Geocoder
 from app.offers.apify import ApifyClient
 from app.offers.ebay import EbayClient
 from app.offers.apify import ApifyError
-from app.offers.platforms import PLATFORMS
+from app.offers.platforms import PLATFORMS, run_cost
 from app.offers.scoring import discogs_reference_price, score_listings
 from app.offers.service import OffersStore, album_listings, judge
 from app.spotify.normalize import artist_key, fold
@@ -53,6 +53,7 @@ class ResaleJob:
     apify_runs: int = 0
     errors: int = 0
     discovered: int = 0  # albums ajoutés à la liste lors du balayage
+    cost: float = 0.0  # coût Apify estimé de l'analyse, en dollars
     last_error: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
@@ -98,6 +99,42 @@ async def discogs_value(ctx: ResaleContext, item: WatchItem) -> AlbumOffers | No
     return offers
 
 
+def can_spend(ctx: ResaleContext, rs, estimate: float, runs: int = 1) -> bool:
+    """Budget du jour : nombre de recherches ET dollars (Apify facture au résultat)."""
+    if ctx.apify is None:
+        return False
+    if ctx.resale.apify_runs_today() + runs > rs.daily_apify_runs:
+        return False
+    return ctx.resale.spent_today() + estimate <= rs.daily_budget_usd + 1e-9
+
+
+def budget_message(ctx: ResaleContext, rs, what: str) -> str:
+    return (
+        f"Budget Apify du jour atteint ({ctx.resale.spent_today():.2f} $ / {rs.daily_budget_usd:.2f} $, "
+        f"{ctx.resale.apify_runs_today()}/{rs.daily_apify_runs} recherches) : {what}. "
+        "Remise à zéro à minuit (heure de Bruxelles) ; réglable dans « Réglages de la revente »."
+    )
+
+
+async def _record(ctx: ResaleContext, job: "ResaleJob", searches) -> None:
+    for s in searches:
+        cost = run_cost(s.platform, s.raw_count)
+        await ctx.resale.add_usage(1, s.raw_count, cost)
+        job.apify_runs += 1
+        job.cost = round(job.cost + cost, 4)
+
+
+async def fetch_comparables(ctx: ResaleContext, job: "ResaleJob", item: WatchItem) -> list[Comparable]:
+    """Annonces Vinted du même disque (peu nombreuses, réutilisées plusieurs jours : c'est payant)."""
+    rs = ctx.resale.settings
+    settings = ctx.user_settings.model_copy(update={"platforms": ["vinted"]})
+    result = await album_listings(
+        ctx.apify, ctx.offers, to_album(item), settings, rs.comparables_max_items, rs.comparables_cache_days * 24
+    )
+    await _record(ctx, job, [s for s in result.searches if not s.from_cache])
+    return _comparables([l for s in result.searches for l in s.listings])
+
+
 def _comparables(listings, exclude_id: str | None = None) -> list[Comparable]:
     comps = [
         Comparable(platform=l.platform, title=l.title, url=l.url, price=l.price, condition=l.condition)
@@ -115,6 +152,7 @@ async def evaluate_candidates(
     offers: AlbumOffers | None,
     job: ResaleJob,
     source: str,
+    allow_pistes: bool = False,
 ) -> list[tuple[Opportunity, bool]]:
     """Évalue des annonces déjà classées (prix livré connu) ; enregistre les opportunités retenues."""
     rs = ctx.resale.settings
@@ -128,10 +166,11 @@ async def evaluate_candidates(
             job.filtered[reason] = job.filtered.get(reason, 0) + 1
             continue
         comps = [c for c in comparables if c.url != listing.url]
-        if rs.require_vinted_comparables and len(comps) < rs.min_comparables:
+        piste = rs.require_vinted_comparables and len(comps) < rs.min_comparables
+        if piste and not allow_pistes:
             job.filtered["comparables Vinted insuffisants"] = job.filtered.get("comparables Vinted insuffisants", 0) + 1
             continue
-        value, basis, grade = resale_estimate(listing, suggestions, [c.price for c in comps], rs)
+        value, basis, grade = resale_estimate(listing, suggestions, [] if piste else [c.price for c in comps], rs)
         if value is None:
             job.filtered["pas de référence de prix"] = job.filtered.get("pas de référence de prix", 0) + 1
             continue
@@ -144,7 +183,10 @@ async def evaluate_candidates(
         risks = risks_for(listing)
         if roi >= 3:
             risks.append("Prix anormalement bas : arnaque, erreur ou mauvaise identification ? Vérifier")
-        if len(comps) < 3:
+        if piste:
+            basis += " (provisoire : à vérifier sur Vinted)"
+            job.filtered["pistes à vérifier"] = job.filtered.get("pistes à vérifier", 0) + 1
+        elif len(comps) < 3:
             risks.append("Peu d'annonces Vinted comparables : estimation fondée sur la cote Discogs")
         envoi = listing.delivery_mode == "envoi"
         opp = Opportunity(
@@ -163,6 +205,7 @@ async def evaluate_candidates(
             demand=item.demand,
             risks=risks,
             source=source,
+            needs_check=piste,
             buy_price=listing.price,
             buy_fee=listing.buyer_fee if envoi else 0.0,
             buy_shipping=listing.shipping_estimate if envoi else 0.0,
@@ -175,9 +218,12 @@ async def evaluate_candidates(
             discogs_for_sale=offers.total_for_sale if offers else None,
             discogs_url=f"https://www.discogs.com/sell/list?master_id={item.discogs_id}&format=Vinyl",
         )
+        previous = ctx.resale.opportunities.get(opp.key)
+        if piste and previous is not None and not previous.needs_check:
+            continue  # déjà vérifiée sur Vinted : on ne la redégrade pas en piste
         is_new = await ctx.resale.upsert_opportunity(opp)
         job.opportunities += 1
-        if is_new:
+        if is_new and not piste:
             job.new_opportunities += 1
             job.new_keys.append(opp.key)
         results.append((opp, is_new))
@@ -194,8 +240,8 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
     max_age = ctx.cache_hours * 3600
     platforms = [p for p in rs.platforms if p != "ebay" or ctx.ebay is not None]
     paid = [p for p in platforms if p in APIFY_PLATFORMS and ctx.offers.get(p, item.key, max_age) is None]
-    remaining = max(rs.daily_apify_runs - ctx.resale.apify_runs_today(), 0)
-    if ctx.apify is None or len(paid) > remaining:
+    estimate = sum(run_cost(p, ctx.max_items) for p in paid)
+    if paid and not can_spend(ctx, rs, estimate, runs=len(paid)):
         platforms = [p for p in platforms if p not in paid]  # quota atteint : on se contente du cache et d'eBay
         paid = []
     if not platforms:
@@ -205,9 +251,7 @@ async def scan_item(ctx: ResaleContext, item: WatchItem, job: ResaleJob) -> None
         ctx.apify, ctx.offers, album, settings, ctx.max_items, ctx.cache_hours,
         geocoder=ctx.geocoder, discogs_offers=offers, ebay=ctx.ebay if "ebay" in platforms else None,
     )
-    executed = sum(1 for s in result.searches if s.platform in paid and not s.from_cache)
-    await ctx.resale.add_apify_runs(executed)
-    job.apify_runs += executed
+    await _record(ctx, job, [s for s in result.searches if s.platform in paid and not s.from_cache])
     for s in result.searches:
         if s.error:
             job.errors += 1
@@ -244,7 +288,7 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
                     found, ctx.user_settings, discogs_reference_price(offers),
                     price_suggestions=offers.price_suggestions if offers else None,
                 )
-                cached = ctx.offers.get("vinted", key, 7 * 24 * 3600)
+                cached = ctx.offers.get("vinted", key, rs.comparables_cache_days * 24 * 3600)
                 comps = _comparables(found + (cached.listings if cached else []))
                 prepared.append([item, offers, ranked, comps, _potential(ranked, offers, rs)])
             except Exception as exc:  # noqa: BLE001
@@ -257,22 +301,18 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
             key=lambda p: p[4], reverse=True,
         )[: rs.verify_top]
         for entry in to_verify:
-            if ctx.apify is None or ctx.resale.apify_runs_today() >= rs.daily_apify_runs:
-                job.last_error = "Plafond Apify atteint : vérification partielle"
+            if not can_spend(ctx, rs, run_cost("vinted", rs.comparables_max_items)):
+                job.last_error = budget_message(ctx, rs, "vérification partielle")
                 break
             job.phase = "vérification par les prix Vinted"
-            settings = ctx.user_settings.model_copy(update={"platforms": ["vinted"]})
-            result = await album_listings(ctx.apify, ctx.offers, to_album(entry[0]), settings, ctx.max_items, ctx.cache_hours)
-            if any(not s.from_cache for s in result.searches):
-                await ctx.resale.add_apify_runs(1)
-                job.apify_runs += 1
+            extra = await fetch_comparables(ctx, job, entry[0])
             seen = {c.url for c in entry[3]}
-            entry[3] = entry[3] + [c for c in _comparables([l for s in result.searches for l in s.listings]) if c.url not in seen]
+            entry[3] = entry[3] + [c for c in extra if c.url not in seen]
 
         # 3) Évaluation, avec les comparables Vinted exigés.
         job.phase = "évaluation"
         for item, offers, ranked, comps, _ in prepared:
-            await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage")
+            await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage", allow_pistes=True)
             job.done += 1
     finally:
         job.running, job.phase, job.finished_at = False, "terminé", time.time()
@@ -342,12 +382,8 @@ async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:
     for platform in [p for p in ("vinted", "2ememain") if p in rs.platforms]:
         config = PLATFORMS[platform]
         for query in rs.sweep_queries:
-            if ctx.apify is None or ctx.resale.apify_runs_today() >= rs.daily_apify_runs:
-                job.last_error = (
-                    f"Plafond Apify du jour atteint ({ctx.resale.apify_runs_today()}/{rs.daily_apify_runs} recherches) : "
-                    "balayage partiel. Remise à zéro à minuit (heure de Bruxelles) ; le plafond se règle dans "
-                    "« Réglages de la revente »."
-                )
+            if not can_spend(ctx, rs, run_cost(platform, rs.sweep_max_items)):
+                job.last_error = budget_message(ctx, rs, "balayage partiel")
                 return list(listings.values())
             try:
                 items = await ctx.apify.run_actor(
@@ -357,8 +393,9 @@ async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:
                 job.errors += 1
                 job.last_error = f"{platform} : {exc}"[:200]
                 items = []
-            await ctx.resale.add_apify_runs(1)
+            await ctx.resale.add_usage(1, len(items), run_cost(platform, len(items)))
             job.apify_runs += 1
+            job.cost = round(job.cost + run_cost(platform, len(items)), 4)
             for raw in items:
                 listing = config.parse(raw)
                 if listing is None:

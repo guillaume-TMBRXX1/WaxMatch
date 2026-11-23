@@ -8,7 +8,18 @@ from app.deps import get_spotify
 from app.resale.models import Opportunity, ResaleSettings, WatchItem
 from pydantic import BaseModel
 
-from app.resale.service import ResaleContext, ResaleJob, run_resale_scan, run_sweep
+from app.offers.platforms import run_cost
+from app.resale.service import (
+    ResaleContext,
+    ResaleJob,
+    budget_message,
+    can_spend,
+    discogs_value,
+    evaluate_candidates,
+    fetch_comparables,
+    run_resale_scan,
+    run_sweep,
+)
 from app.resale.watchlist import build_watchlist
 from app.spotify.client import SpotifyClient
 
@@ -140,6 +151,29 @@ async def decide(key: str, body: DecisionInput, request: Request, spotify: Spoti
     return opp
 
 
+@router.post("/opportunities/{key}/verify", response_model=Opportunity | None)
+async def verify(key: str, request: Request, spotify: SpotifyClient = Depends(get_spotify)):
+    """Piste : récupère des annonces Vinted comparables (~0,01 $) et confirme ou retire l'opportunité."""
+    state = request.app.state
+    store = state.resale_store
+    opp = store.opportunities.get(key)
+    item = store.watchlist.get(opp.watch_key) if opp else None
+    if opp is None or item is None:
+        raise HTTPException(status_code=404, detail="Piste introuvable")
+    ctx = await _context(request, spotify)
+    rs = store.settings
+    if not can_spend(ctx, rs, run_cost("vinted", rs.comparables_max_items)):
+        raise HTTPException(status_code=429, detail=budget_message(ctx, rs, "vérification impossible"))
+    job = ResaleJob()
+    comps = await fetch_comparables(ctx, job, item)
+    offers = await discogs_value(ctx, item)
+    kept = await evaluate_candidates(ctx, item, [opp.listing], comps, offers, job, opp.source)
+    if kept:
+        return kept[0][0]
+    await store.remove(key)  # prix Vinted vérifiés : pas d'affaire
+    return None
+
+
 @router.get("/status")
 async def scan_status(request: Request):
     return request.app.state.resale_job.status()
@@ -148,7 +182,7 @@ async def scan_status(request: Request):
 @router.get("/opportunities", response_model=list[Opportunity])
 async def list_opportunities(
     request: Request,
-    view: Literal["a_trier", "gardees", "disparues", "ecartees", "toutes"] = "a_trier",
+    view: Literal["a_trier", "pistes", "gardees", "disparues", "ecartees", "toutes"] = "a_trier",
     status: Literal["active", "disparue"] | None = Query(None, description="Ancien filtre (compatibilité)"),
     sort: Literal["margin", "roi", "recent", "demand"] = "margin",
     min_margin: float = 0,
@@ -158,7 +192,8 @@ async def list_opportunities(
         if status is not None:
             return o.status == status and o.decision != "ecartee"
         return {
-            "a_trier": o.decision is None and o.status == "active",
+            "a_trier": o.decision is None and o.status == "active" and not o.needs_check,
+            "pistes": o.decision is None and o.status == "active" and o.needs_check,
             "gardees": o.decision == "gardee",
             "disparues": o.decision is None and o.status == "disparue",
             "ecartees": o.decision == "ecartee",
@@ -185,7 +220,16 @@ async def stats(request: Request, spotify: SpotifyClient = Depends(get_spotify))
     week_ago = time.time() - 7 * 24 * 3600
     return {
         "watched": len(store.watchlist),
-        "to_review": sum(1 for o in active if o.decision is None),
+        "to_review": sum(1 for o in active if o.decision is None and not o.needs_check),
+        "pistes": sum(1 for o in active if o.decision is None and o.needs_check),
+        "spent_today": store.spent_today(),
+        "spent_month": store.spent_month(),
+        "daily_budget": store.settings.daily_budget_usd,
+        "sweep_cost_usd": round(
+            sum(run_cost(p, store.settings.sweep_max_items) for p in ("vinted", "2ememain") if p in store.settings.platforms)
+            * len(store.settings.sweep_queries),
+            2,
+        ),
         "kept": sum(1 for o in opps if o.decision == "gardee"),
         "dismissed": len(dismissed),
         "dismissed_reasons": reasons,

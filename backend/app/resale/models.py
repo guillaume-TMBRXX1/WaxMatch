@@ -11,6 +11,8 @@ FUNK_SOUL_STYLES = ["Funk", "Soul", "Disco", "Rhythm & Blues", "Afrobeat", "Jazz
 class ResaleSettings(BaseModel):
     """Réglages de l'onglet Revente (revente visée : Vinted)."""
 
+    settings_version: int = 2  # 2 : réglages économes (facturation Apify au résultat)
+
     genre: str = "Funk / Soul"
     styles: list[str] = Field(default_factory=lambda: list(FUNK_SOUL_STYLES))
     extra_genres: list[str] = Field(default_factory=lambda: ["Jazz", "Rock"], description="Genres secondaires")
@@ -24,7 +26,9 @@ class ResaleSettings(BaseModel):
     platforms: list[Literal["vinted", "2ememain", "ebay", "leboncoin"]] = Field(
         default_factory=lambda: ["ebay", "vinted", "2ememain"]
     )
-    daily_apify_runs: int = Field(30, ge=0, le=1000, description="Plafond journalier de recherches Apify")
+    daily_apify_runs: int = Field(50, ge=0, le=1000, description="Plafond journalier de recherches Apify")
+    # Apify facture au résultat (~1 $ / 1 000 annonces) : le vrai garde-fou est un budget en dollars.
+    daily_budget_usd: float = Field(0.15, ge=0, le=50, description="Budget Apify par jour, en dollars")
     min_grade: Literal["G+", "VG", "VG+", "NM"] = Field("VG", description="État minimum, défauts compris")
     require_confirmed_vinyl: bool = Field(True, description="Exiger une preuve que c'est un vinyle")
     allow_no_sleeve: bool = Field(False, description="Accepter les disques sans pochette")
@@ -33,11 +37,12 @@ class ResaleSettings(BaseModel):
     exclude_mixed: bool = Field(True, description="Écarter les annonces mixtes (vinyle + CD, goodies…)")
     # Balayage large : quelques recherches par style, dont les annonces sont comparées à toute la liste.
     sweep_queries: list[str] = Field(
-        default_factory=lambda: ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro", "vinyle jazz funk",
-                                 "vinyle rnb"]
+        default_factory=lambda: ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro"]
     )
-    sweep_max_items: int = Field(100, ge=10, le=500, description="Annonces récupérées par recherche de balayage")
-    verify_top: int = Field(8, ge=0, le=50, description="Disques prometteurs vérifiés avec une recherche Vinted dédiée")
+    sweep_max_items: int = Field(30, ge=5, le=500, description="Annonces récupérées par recherche de balayage")
+    verify_top: int = Field(3, ge=0, le=50, description="Disques prometteurs vérifiés automatiquement sur Vinted")
+    comparables_max_items: int = Field(12, ge=3, le=50, description="Annonces Vinted récupérées pour comparer")
+    comparables_cache_days: int = Field(7, ge=1, le=60, description="Durée de réutilisation des comparables")
     # Revente sur Vinted : seule la preuve par les prix Vinted compte.
     require_vinted_comparables: bool = Field(True, description="Exiger des annonces Vinted comparables")
     min_comparables: int = Field(3, ge=1, le=20)
@@ -94,6 +99,8 @@ class Opportunity(BaseModel):
     decision_reason: str | None = None
     decided_at: float | None = None
     source: Literal["disque", "balayage"] = "disque"
+    # Piste : marge possible d'après la cote Discogs, mais pas encore confirmée par des prix Vinted.
+    needs_check: bool = False
     # Détail du calcul, pour vérifier soi-même.
     buy_price: float | None = None
     buy_fee: float | None = None

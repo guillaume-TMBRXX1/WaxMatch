@@ -22,8 +22,8 @@ from app.spotify.normalize import LibraryAlbum, artist_key, fold, strip_nickname
 
 log = logging.getLogger("waxmatch.offers")
 
-# Coût réel observé : ~0,001-0,002 $ par recherche (20 annonces max) ; on garde une marge.
-COST_PER_SEARCH = {"vinted": 0.003, "leboncoin": 0.003, "2ememain": 0.003, "discogs": 0.0, "ebay": 0.0}
+# Facturation Apify au résultat (~1 $ / 1 000 annonces) : une recherche de 20 annonces ≈ 0,02 $.
+COST_PER_SEARCH = {"vinted": 0.02, "leboncoin": 0.02, "2ememain": 0.02, "discogs": 0.0, "ebay": 0.0}
 
 
 

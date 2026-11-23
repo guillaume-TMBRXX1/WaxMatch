@@ -8,6 +8,7 @@ import type { Opportunity, ResaleSettings, ResaleStats, ResaleStatus, WatchItem 
 
 const VIEWS = [
   { value: "a_trier", label: "À trier" },
+  { value: "pistes", label: "Pistes" },
   { value: "gardees", label: "Gardées" },
   { value: "disparues", label: "Disparues" },
   { value: "ecartees", label: "Écartées" },
@@ -100,7 +101,17 @@ function OpportunityDetails({ opp }: { opp: Opportunity }) {
   );
 }
 
-function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decision: "gardee" | "ecartee" | null, reason?: string) => void }) {
+function OpportunityCard({
+  opp,
+  onDecide,
+  onVerify,
+}: {
+  opp: Opportunity;
+  onDecide: (decision: "gardee" | "ecartee" | null, reason?: string) => void;
+  onVerify: () => Promise<string | null>;
+}) {
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
   const l = opp.listing;
   const gone = opp.status === "disparue";
   const [open, setOpen] = useState(false);
@@ -118,6 +129,7 @@ function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decis
           <div className="cluster" style={{ marginBottom: 6 }}>
             {gone ? <span className="badge-live">Disparue · vendue ?</span> : opp.roi >= 1 && <span className="badge-live">×2</span>}
             {opp.decision === "gardee" && <span className="pill premium">Gardée</span>}
+            {opp.needs_check && <span className="pill">Piste · non vérifiée</span>}
             <span className="pill">{PLATFORM_LABEL[l.platform]}</span>
             <span className="pill">≈ {opp.grade}</span>
             {l.delivery_mode && (
@@ -155,6 +167,21 @@ function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decis
           {open ? "Masquer le détail" : "Détail du calcul et comparaisons"}
         </button>
         <div className="cluster">
+          {opp.needs_check && !opp.decision && (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={verifying}
+              onClick={async () => {
+                setVerifying(true);
+                setVerifyMsg(await onVerify());
+                setVerifying(false);
+              }}
+              title="Récupère des annonces Vinted du même disque pour confirmer le prix de revente"
+            >
+              {verifying ? "Vérification…" : "Vérifier sur Vinted (~0,01 $)"}
+            </button>
+          )}
           {opp.decision ? (
             <button type="button" className="btn-secondary" onClick={() => onDecide(null)}>Annuler mon choix</button>
           ) : askReason ? (
@@ -177,6 +204,11 @@ function OpportunityCard({ opp, onDecide }: { opp: Opportunity; onDecide: (decis
           )}
         </div>
       </div>
+      {verifyMsg && (
+        <p role="status" style={{ margin: "10px 0 0", color: "var(--ink-2)" }}>
+          {verifyMsg}
+        </p>
+      )}
       {open && <OpportunityDetails opp={opp} />}
     </article>
   );
@@ -223,7 +255,10 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
         {num("min_margin", "Marge minimum", "€")}
         {num("min_roi", "Rendement minimum", "%", 5, 100)}
         {num("max_buy", "Achat maximum", "€")}
+        {num("daily_budget_usd", "Budget Apify par jour", "$", 0.05)}
         {num("daily_apify_runs", "Recherches Apify par jour", "max")}
+        {num("sweep_max_items", "Annonces par recherche de balayage", "nb")}
+        {num("verify_top", "Vérifications automatiques", "nb")}
       </div>
       <div className="cluster" style={{ gap: 12, alignItems: "flex-end" }}>
         <label className="field" style={{ flex: "0 1 200px" }}>
@@ -373,6 +408,20 @@ export default function ResalePage() {
     }
   }
 
+  async function verify(key: string): Promise<string | null> {
+    try {
+      const result = await api<Opportunity | null>(`/resale/opportunities/${encodeURIComponent(key)}/verify`, {
+        method: "POST",
+      });
+      const msg = result ? null : "Prix Vinted vérifiés : ce n'est pas une affaire, piste retirée.";
+      opps.reload();
+      stats.reload();
+      return msg;
+    } catch (e) {
+      return e instanceof ApiError ? e.message : String(e);
+    }
+  }
+
   async function launch(path: string) {
     setError(null);
     try {
@@ -438,6 +487,7 @@ export default function ResalePage() {
                 <p style={{ margin: "6px 0 10px" }}>
                   {job!.phase} · {job!.done}/{job!.total} · {job!.new_opportunities} nouvelles opportunités
                   {job!.discovered ? ` · ${job!.discovered} albums découverts` : ""}
+                  {job!.cost ? ` · ${job!.cost.toFixed(3)} $` : ""}
                 </p>
                 <div className="meter" aria-hidden="true">
                   <span style={{ width: `${job!.total ? (100 * job!.done) / job!.total : 5}%` }} />
@@ -446,10 +496,11 @@ export default function ResalePage() {
             ) : (
               <p style={{ margin: "6px 0 0", color: "var(--ink-2)" }}>
                 {s?.watched
-                  ? `Apify aujourd'hui : ${s.apify_runs_today}/${s.apify_daily_cap} recherches (remise à zéro à minuit). ` +
-                    `Un balayage large en utilise ${s.sweep_cost ?? "?"}` +
-                    ((s.sweep_cost ?? 0) > s.apify_daily_cap - s.apify_runs_today
-                      ? ` : il n'en reste que ${Math.max(s.apify_daily_cap - s.apify_runs_today, 0)}, le balayage sera partiel.`
+                  ? `Apify : ${(s.spent_today ?? 0).toFixed(2)} $ aujourd'hui sur ${(s.daily_budget ?? 0).toFixed(2)} $ ` +
+                    `(${(s.spent_month ?? 0).toFixed(2)} $ ce mois-ci, estimation). Un balayage large coûte jusqu'à ` +
+                    `${(s.sweep_cost_usd ?? 0).toFixed(2)} $` +
+                    ((s.sweep_cost_usd ?? 0) > (s.daily_budget ?? 0) - (s.spent_today ?? 0)
+                      ? " : budget du jour insuffisant, il sera partiel."
                       : ".") +
                     ` eBay : ${s.ebay_configured ? "actif, gratuit" : "non configuré"}.`
                   : "Commence par construire la liste de surveillance : les disques les plus demandés sur Discogs (gratuit)."}
@@ -514,7 +565,9 @@ export default function ResalePage() {
           {VIEWS.map((x) => (
             <button key={x.value} type="button" aria-pressed={view === x.value} onClick={() => setView(x.value)}>
               {x.label}
-              {x.value === "a_trier" && s ? ` · ${s.to_review}` : x.value === "gardees" && s ? ` · ${s.kept}` : ""}
+              {x.value === "a_trier" && s ? ` · ${s.to_review}` : ""}
+              {x.value === "pistes" && s ? ` · ${s.pistes ?? 0}` : ""}
+              {x.value === "gardees" && s ? ` · ${s.kept}` : ""}
             </button>
           ))}
         </div>
@@ -538,7 +591,12 @@ export default function ResalePage() {
       ) : (
         <div className="stack">
           {opps.data!.map((o) => (
-            <OpportunityCard key={o.key} opp={o} onDecide={(decision, reason) => decide(o.key, decision, reason)} />
+            <OpportunityCard
+              key={o.key}
+              opp={o}
+              onDecide={(decision, reason) => decide(o.key, decision, reason)}
+              onVerify={() => verify(o.key)}
+            />
           ))}
         </div>
       )}

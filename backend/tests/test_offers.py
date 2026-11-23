@@ -287,7 +287,7 @@ def test_scan_and_best():
         _fast_geocoder(client)
         _login(client)
         started = client.post("/offers/scan", params={"limit": 5}).json()
-        assert started["running"] and started["estimated_cost_usd"] == 0.03
+        assert started["running"] and started["estimated_cost_usd"] == 0.2  # 5 albums × 2 plateformes × 0,02 $
         for _ in range(200):
             status = client.get("/offers/scan/status").json()
             if not status["running"]:
