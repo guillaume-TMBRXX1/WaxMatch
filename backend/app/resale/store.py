@@ -1,5 +1,6 @@
 """Persistance de l'onglet Revente (mémoire + PostgreSQL si disponible)."""
 
+import hashlib
 import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -43,6 +44,12 @@ class ResaleStore:
             if data.get("verify_top", 8) >= 8:
                 data.pop("verify_top", None)
             data["settings_version"] = 2
+        if data and data.get("settings_version", 1) < 3:
+            # v3 : identification élargie (Discogs, gratuite) et liste plus grande.
+            for key, old in (("discovery_max_lookups", 40), ("discovery_min_want", 150), ("watchlist_size", 600)):
+                if data.get(key) == old:
+                    data.pop(key)
+            data["settings_version"] = 3
         return ResaleSettings.model_validate(data)
 
     async def _put_meta(self, key: str, data: dict) -> None:
@@ -52,6 +59,13 @@ class ResaleStore:
                 "insert into resale_meta (key, data) values ($1, $2) on conflict (key) do update set data = excluded.data",
                 key, data,
             )
+
+    def recently_missed(self, query: str, days: int = 30) -> bool:
+        entry = self.meta.get(f"miss:{hashlib.sha1(query.encode()).hexdigest()[:16]}")
+        return bool(entry) and time.time() - entry.get("t", 0) < days * 86400
+
+    async def remember_miss(self, query: str) -> None:
+        await self._put_meta(f"miss:{hashlib.sha1(query.encode()).hexdigest()[:16]}", {"t": time.time(), "q": query[:120]})
 
     async def save_settings(self, settings: ResaleSettings) -> None:
         await self._put_meta("settings", settings.model_dump(mode="json"))
