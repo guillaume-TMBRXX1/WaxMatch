@@ -187,6 +187,7 @@ export interface ResaleSettings {
   allow_pistes: boolean;
   min_comparables: number;
   discover_new_albums: boolean;
+  identify_unmatched: boolean;
   discovery_min_want: number;
   discovery_max_lookups: number;
 }
@@ -235,6 +236,7 @@ export interface ResaleStatus {
   filtered_total?: number;
   ebay_calls?: number;
   listings_seen?: number;
+  identify_lookups?: number;
 }
 
 export interface UserSettings {

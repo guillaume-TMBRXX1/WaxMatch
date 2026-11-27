@@ -11,12 +11,12 @@ FUNK_SOUL_STYLES = ["Funk", "Soul", "Disco", "Rhythm & Blues", "Afrobeat", "Jazz
 class ResaleSettings(BaseModel):
     """Réglages de l'onglet Revente (revente visée : Vinted)."""
 
-    settings_version: int = 2  # 2 : réglages économes (facturation Apify au résultat)
+    settings_version: int = 3  # 2 : réglages économes (Apify au résultat) ; 3 : identification élargie
 
     genre: str = "Funk / Soul"
     styles: list[str] = Field(default_factory=lambda: list(FUNK_SOUL_STYLES))
     extra_genres: list[str] = Field(default_factory=lambda: ["Jazz", "Rock"], description="Genres secondaires")
-    watchlist_size: int = Field(600, ge=20, le=3000)
+    watchlist_size: int = Field(1500, ge=20, le=5000)
     min_margin: float = Field(8.0, ge=0, description="Marge nette minimum, en euros")
     min_roi: float = Field(0.3, ge=0, description="Rendement minimum : 0,3 = +30 % sur le prix d'achat")
     max_buy: float = Field(80.0, gt=0, description="Prix d'achat livré maximum")
@@ -60,8 +60,9 @@ class ResaleSettings(BaseModel):
     min_comparables: int = Field(3, ge=1, le=20)
     # Découverte : annonce d'un artiste suivi pour un album absent de la liste -> recherche Discogs.
     discover_new_albums: bool = True
-    discovery_min_want: int = Field(150, ge=0, description="Demande minimum (want Discogs) d'un album découvert")
-    discovery_max_lookups: int = Field(40, ge=0, le=300, description="Recherches Discogs de découverte par balayage")
+    identify_unmatched: bool = Field(True, description="Identifier aussi les annonces d'artistes non suivis")
+    discovery_min_want: int = Field(60, ge=0, description="Demande minimum (want Discogs) d'un album découvert")
+    discovery_max_lookups: int = Field(150, ge=0, le=600, description="Identifications Discogs par balayage (gratuit)")
 
 
 class WatchItem(BaseModel):

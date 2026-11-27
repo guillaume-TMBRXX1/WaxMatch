@@ -259,6 +259,8 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
         {num("daily_apify_runs", "Recherches Apify par jour", "max")}
         {num("sweep_max_items", "Annonces par recherche de balayage", "nb")}
         {num("verify_top", "Vérifications automatiques", "nb")}
+        {num("discovery_max_lookups", "Identifications Discogs par balayage", "nb")}
+        {num("discovery_min_want", "Demande minimum d'un album découvert", "want")}
       </div>
       <div className="cluster" style={{ gap: 12, alignItems: "flex-end" }}>
         <label className="field" style={{ flex: "0 1 200px" }}>
@@ -280,6 +282,7 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
           [
             ["require_vinted_comparables", "Exiger des annonces Vinted comparables", "revente sur Vinted : seule la preuve par les prix Vinted compte"],
             ["discover_new_albums", "Découvrir des albums", "annonce d'un artiste suivi, album absent de la liste : recherche Discogs"],
+            ["identify_unmatched", "Identification élargie", "annonces d'artistes non suivis identifiées sur Discogs (gratuit, plus lent)"],
             ["allow_pistes", "Garder les pistes", "estimées sur la seule cote Discogs (souvent trompeuses), à vérifier à la main"],
             ["require_confirmed_vinyl", "Exiger une preuve que c'est un vinyle", "mention vinyle/LP/33t ou catégorie vinyles"],
             ["exclude_mixed", "Écarter les annonces mixtes", "vinyle + CD, goodies, poster…"],
@@ -600,7 +603,7 @@ export default function ResalePage() {
           <p style={{ margin: "10px 0 0", color: "var(--ink-2)" }}>
             Dernière analyse :{" "}
             {job.listings_seen
-              ? `${job.listings_seen} annonces examinées (${job.ebay_calls ?? 0} recherches eBay gratuites, ${(job.cost ?? 0).toFixed(3)} $ Apify) · `
+              ? `${job.listings_seen} annonces examinées (${job.ebay_calls ?? 0} recherches eBay et ${job.identify_lookups ?? 0} identifications Discogs gratuites, ${(job.cost ?? 0).toFixed(3)} $ Apify) · ${job.discovered ?? 0} albums ajoutés à la liste · `
               : ""}
             {job.filtered_total} annonces écartées —{" "}
             {Object.entries(job.filtered ?? {})

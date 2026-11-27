@@ -43,7 +43,7 @@ def item_from_result(result: dict) -> WatchItem | None:
     )
 
 
-async def build_watchlist(client: DiscogsClient, settings: ResaleSettings, pages_per_style: int = 3) -> list[WatchItem]:
+async def build_watchlist(client: DiscogsClient, settings: ResaleSettings, pages_per_style: int = 6) -> list[WatchItem]:
     """Interroge Discogs par style (fiches « master », vinyle, triées par demande) et garde les plus demandés."""
     queries = [{"genre": settings.genre, "style": style} for style in settings.styles]
     queries += [{"genre": genre} for genre in settings.extra_genres]

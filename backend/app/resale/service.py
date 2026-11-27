@@ -55,6 +55,7 @@ class ResaleJob:
     discovered: int = 0  # albums ajoutés à la liste lors du balayage
     cost: float = 0.0  # coût Apify estimé de l'analyse, en dollars
     ebay_calls: int = 0  # recherches eBay (gratuites)
+    identify_lookups: int = 0  # identifications Discogs (gratuites)
     listings_seen: int = 0  # annonces examinées par le balayage
     last_error: str | None = None
     started_at: float | None = None
@@ -275,7 +276,7 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
         job.phase = "rapprochement avec la liste de surveillance"
         matches = _match_watchlist(ctx, listings)
         if rs.discover_new_albums and ctx.discogs is not None:
-            job.phase = "découverte d'albums (Discogs)"
+            job.phase = "identification des annonces (Discogs)"
             matched_ids = {id(l) for found in matches.values() for l in found}
             await _discover(ctx, job, rs, [l for l in listings if id(l) not in matched_ids], matches)
         job.total = len(matches)
@@ -341,28 +342,43 @@ _GENERIC_WORDS = set(
 
 
 async def _discover(ctx: ResaleContext, job: ResaleJob, rs, listings: list, matches: dict[str, list]) -> None:
-    """Annonce d'un artiste suivi pour un album absent de la liste : recherche Discogs, ajout si demandé."""
+    """Identification sur Discogs (gratuite) des annonces qui ne correspondent à aucun disque surveillé.
+
+    D'abord les artistes déjà suivis, puis (identification élargie) tous les autres, les moins chers en
+    premier ; un album assez demandé (want) est ajouté à la liste et étudié. Les échecs sont mémorisés
+    30 jours pour ne pas reposer la même question à Discogs à chaque balayage.
+    """
     artists = {artist_key(i.artist) for i in ctx.resale.watchlist.values() if artist_key(i.artist)}
-    queries: dict[str, list[dict]] = {}
-    lookups = 0
+    candidates = []
     for listing in listings:
         quality = assess_quality(listing)
-        if quality.blocking or not quality.confirmed:
+        if quality.blocking or not quality.confirmed or listing.price is None or listing.price > rs.max_buy:
             continue
         text = fold(listing.title)
-        if not any(f" {a} " in f" {text} " for a in artists):
+        known = any(f" {a} " in f" {text} " for a in artists)
+        if not known and not rs.identify_unmatched:
             continue
         query = " ".join(w for w in text.split() if w not in _GENERIC_WORDS and not w.isdigit())
+        if len(query.split()) >= 2:
+            candidates.append((0 if known else 1, listing.price, query, listing))
+    candidates.sort(key=lambda c: (c[0], c[1]))
+
+    queries: dict[str, list[dict]] = {}
+    for _, _, query, listing in candidates:
+        fetched_now = False
         if query not in queries:
-            if lookups >= rs.discovery_max_lookups:
+            if ctx.resale.recently_missed(query) or job.identify_lookups >= rs.discovery_max_lookups:
                 continue
-            lookups += 1
+            job.identify_lookups += 1
+            fetched_now = True
             try:
                 queries[query] = await ctx.discogs.search(q=query, type="master", format="Vinyl", per_page=5)
             except Exception as exc:  # noqa: BLE001
                 job.errors += 1
                 job.last_error = str(exc)[:200]
                 queries[query] = []
+                fetched_now = False
+        hit = False
         for result in queries[query]:
             item = item_from_result(result)
             if item is None or item.want < rs.discovery_min_want:
@@ -375,7 +391,10 @@ async def _discover(ctx: ResaleContext, job: ResaleJob, rs, listings: list, matc
                 job.discovered += 1
             if judge(to_album(ctx.resale.watchlist[item.key]), listing)[0]:
                 matches.setdefault(item.key, []).append(listing)
+                hit = True
                 break
+        if fetched_now and not hit:
+            await ctx.resale.remember_miss(query)
 
 
 async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:

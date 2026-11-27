@@ -462,3 +462,56 @@ def test_ebay_first_sweep_is_free_and_verified_on_vinted():
         assert status["apify_runs"] == 1 and status["new_opportunities"] == 1
         opp = client.get("/resale/opportunities").json()[0]
         assert opp["listing"]["platform"] == "ebay" and opp["vinted_median"] == 40 and opp["margin"] == 16.0
+
+
+def test_broad_identification_and_miss_memory():
+    """Annonce d'un artiste NON suivi : identifiée sur Discogs (gratuit) et ajoutée si demandée ;
+    une annonce introuvable n'est plus recherchée aux balayages suivants."""
+    world = FakeWorld()
+    SUPERFLY = {"type": "master", "id": 700, "title": "Curtis Mayfield - Superfly", "year": "1972",
+                "genre": ["Funk / Soul"], "style": ["Soul"], "community": {"want": 900, "have": 5000}}
+    discogs_queries: list[str] = []
+    world.ebay_items = [
+        {**EBAY_ITEM_DE, "itemId": "v1|11|0", "title": "Curtis Mayfield - Superfly LP vinyl 1972",
+         "itemWebUrl": "https://www.ebay.de/itm/11", "price": {"value": "15.00", "currency": "EUR"}},
+        {**EBAY_ITEM_DE, "itemId": "v1|12|0", "title": "Obscure Band - Unknown Record LP vinyl",
+         "itemWebUrl": "https://www.ebay.de/itm/12", "price": {"value": "5.00", "currency": "EUR"}},
+    ]
+
+    def handler(request):
+        if request.url.host == "api.discogs.com" and request.url.path == "/database/search" and request.url.params.get("q"):
+            discogs_queries.append(request.url.params["q"])
+            hit = "curtis mayfield" in request.url.params["q"]
+            return httpx.Response(200, json={"results": [SUPERFLY] if hit else []})
+        return world(request)
+
+    with TestClient(_app(handler), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        assert settings["identify_unmatched"] and settings["discovery_max_lookups"] == 150
+        client.put("/resale/settings", json={**settings, "ebay_sweep_queries": ["soul vinyl"], "ebay_marketplaces": ["EBAY_DE"]})
+
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert status["discovered"] == 1 and status["identify_lookups"] == 2
+        # Le moins cher d'abord : l'annonce à 5 € est identifiée avant celle à 15 €.
+        assert discogs_queries == ["obscure band unknown record", "curtis mayfield superfly"]
+        assert "curtis mayfield|superfly" in {w["key"] for w in client.get("/resale/watchlist", params={"limit": 2000}).json()}
+
+        # Nouveau balayage : l'annonce introuvable n'est pas re-demandée ; Superfly est désormais suivi.
+        client.post("/resale/sweep")
+        assert _wait(client)["identify_lookups"] == 0
+        assert discogs_queries == ["obscure band unknown record", "curtis mayfield superfly"]
+
+
+def test_settings_v2_upgraded_to_broad_identification():
+    from app.resale.store import ResaleStore
+
+    store = ResaleStore()
+    store.meta["settings"] = {"settings_version": 2, "discovery_max_lookups": 40, "discovery_min_want": 150,
+                              "watchlist_size": 600, "daily_budget_usd": 0.06}
+    s = store.settings
+    assert (s.discovery_max_lookups, s.discovery_min_want, s.watchlist_size) == (150, 60, 1500)
+    assert s.daily_budget_usd == 0.06 and s.settings_version == 3
