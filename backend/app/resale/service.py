@@ -315,7 +315,20 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
 
         # 3) Évaluation, avec les comparables Vinted exigés.
         job.phase = "évaluation"
-        for item, offers, ranked, comps, _ in prepared:
+        verified = {id(p) for p in to_verify}
+        for entry in prepared:
+            item, offers, ranked, comps, potential = entry
+            if rs.require_vinted_comparables and len(comps) < rs.min_comparables and not rs.allow_pistes:
+                # Raison exacte, plutôt qu'un vague « comparables insuffisants » :
+                if potential < rs.min_margin:
+                    reason = "trop cher selon la cote Discogs (pas de vérification payée)"
+                elif id(entry) not in verified:
+                    reason = "non vérifiées (limite de vérifications ou budget atteint)"
+                else:
+                    reason = "comparables Vinted insuffisants"
+                job.filtered[reason] = job.filtered.get(reason, 0) + len(ranked)
+                job.done += 1
+                continue
             await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage", allow_pistes=rs.allow_pistes)
             job.done += 1
     finally:
