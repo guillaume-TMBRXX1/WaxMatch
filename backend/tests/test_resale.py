@@ -515,3 +515,19 @@ def test_settings_v2_upgraded_to_broad_identification():
     s = store.settings
     assert (s.discovery_max_lookups, s.discovery_min_want, s.watchlist_size) == (150, 60, 1500)
     assert s.daily_budget_usd == 0.06 and s.settings_version == 3
+
+
+def test_sweep_explains_why_nothing_was_verified():
+    """Annonce eBay déjà plus chère que sa cote Discogs : ni vérification payée, ni libellé trompeur."""
+    world = FakeWorld()
+    world.ebay_items = [{**EBAY_ITEM_DE, "price": {"value": "60.00", "currency": "EUR"}}]
+    with TestClient(_app(world), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        client.put("/resale/settings", json={**settings, "ebay_sweep_queries": ["soul vinyl"], "ebay_marketplaces": ["EBAY_DE"]})
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert status["apify_runs"] == 0
+        assert status["filtered"] == {"trop cher selon la cote Discogs (pas de vérification payée)": 1}
