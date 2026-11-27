@@ -40,7 +40,19 @@ class ResaleSettings(BaseModel):
         default_factory=lambda: ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro"]
     )
     sweep_max_items: int = Field(30, ge=5, le=500, description="Annonces récupérées par recherche de balayage")
-    verify_top: int = Field(3, ge=0, le=50, description="Disques prometteurs vérifiés automatiquement sur Vinted")
+    verify_top: int = Field(5, ge=0, le=50, description="Disques prometteurs vérifiés automatiquement sur Vinted")
+    # Sources du balayage : eBay (API officielle, gratuite) par défaut ; Vinted et 2ememain coûtent (Apify).
+    sweep_platforms: list[Literal["ebay", "vinted", "2ememain"]] = Field(default_factory=lambda: ["ebay"])
+    ebay_sweep_queries: list[str] = Field(
+        default_factory=lambda: ["soul vinyl", "funk vinyl", "disco vinyl", "afrobeat vinyl", "jazz funk lp",
+                                 "northern soul", "rare groove lp", "soul lp original"]
+    )
+    ebay_marketplaces: list[str] = Field(
+        default_factory=lambda: ["EBAY_DE", "EBAY_FR", "EBAY_BE", "EBAY_NL"],
+        description="Sites eBay balayés (le port est toujours calculé vers ton pays)",
+    )
+    ebay_sweep_max_items: int = Field(100, ge=10, le=200, description="Annonces eBay par recherche (gratuit)")
+    allow_pistes: bool = Field(False, description="Garder les pistes estimées sur la seule cote Discogs")
     comparables_max_items: int = Field(12, ge=3, le=50, description="Annonces Vinted récupérées pour comparer")
     comparables_cache_days: int = Field(7, ge=1, le=60, description="Durée de réutilisation des comparables")
     # Revente sur Vinted : seule la preuve par les prix Vinted compte.

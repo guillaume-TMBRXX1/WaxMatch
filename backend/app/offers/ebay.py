@@ -53,15 +53,27 @@ class EbayClient:
         self._expires = time.time() + int(data.get("expires_in", 7200))
         return self._token
 
-    async def search(self, query: str, limit: int = 20, country: str = "BE", zip_code: str | None = None) -> list[dict]:
+    async def search(
+        self,
+        query: str,
+        limit: int = 20,
+        country: str = "BE",
+        zip_code: str | None = None,
+        marketplace: str | None = None,
+        newest_first: bool = False,
+    ) -> list[dict]:
+        """`marketplace` : site eBay interrogé (EBAY_DE…) ; le port reste calculé vers `country`."""
         ctx = f"contextualLocation=country={country}" + (f",zip={zip_code}" if zip_code else "")
+        params = {"q": query, "limit": min(limit, 200), "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}"}
+        if newest_first:
+            params["sort"] = "newlyListed"
         try:
             resp = await self.http.get(
                 SEARCH_URL,
-                params={"q": query, "limit": limit, "filter": "buyingOptions:{FIXED_PRICE|BEST_OFFER}"},
+                params=params,
                 headers={
                     "Authorization": f"Bearer {await self._access_token()}",
-                    "X-EBAY-C-MARKETPLACE-ID": MARKETPLACES.get(country, "EBAY_DE"),
+                    "X-EBAY-C-MARKETPLACE-ID": marketplace or MARKETPLACES.get(country, "EBAY_DE"),
                     "X-EBAY-C-ENDUSERCTX": ctx,
                 },
                 timeout=30,

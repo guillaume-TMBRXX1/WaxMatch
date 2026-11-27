@@ -66,6 +66,7 @@ def test_resale_estimate_is_conservative():
 class FakeWorld:
     def __init__(self):
         self.apify_calls = 0
+        self.ebay_calls: list[tuple] = []
         self.ebay_items = [EBAY_ITEM_DE, EBAY_ITEM_US]
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -74,7 +75,9 @@ class FakeWorld:
             return httpx.Response(200, json={"access_token": "EBAYTOKEN", "expires_in": 7200})
         if host == "api.ebay.com":
             assert request.headers["Authorization"] == "Bearer EBAYTOKEN"
-            assert request.headers["X-EBAY-C-MARKETPLACE-ID"] == "EBAY_BE"
+            assert request.headers["X-EBAY-C-MARKETPLACE-ID"] in {"EBAY_BE", "EBAY_DE", "EBAY_FR", "EBAY_NL"}
+            self.ebay_calls.append((request.headers["X-EBAY-C-MARKETPLACE-ID"], request.url.params["q"],
+                                    request.url.params.get("sort")))
             assert "country=BE" in request.headers["X-EBAY-C-ENDUSERCTX"]
             return httpx.Response(200, json={"itemSummaries": self.ebay_items})
         if host == "api.discogs.com":
@@ -261,7 +264,8 @@ def test_sweep_matches_many_listings_with_few_searches():
         client.post("/resale/watchlist/build")
         _wait(client)
         settings = client.get("/resale/settings").json()
-        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul", "vinyle funk"]})
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul", "vinyle funk"],
+                                             "sweep_platforms": ["vinted", "2ememain"]})
         client.post("/resale/sweep")
         status = _wait(client)
         # 2 requêtes × 2 plateformes pour le balayage + 1 vérification.
@@ -323,7 +327,7 @@ def test_listing_at_vinted_market_price_is_not_an_opportunity():
         # Conversion Discogs -> Vinted généreuse (VG+ 45 € × 1,2 = 54 €) : sur la cote seule, on aurait cru à une
         # affaire ; la vérification par les prix Vinted (marché à ~40 €) montre que non.
         client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"], "min_margin": 2, "min_roi": 0.0,
-                                             "discogs_to_vinted": 1.2})
+                                             "discogs_to_vinted": 1.2, "sweep_platforms": ["vinted", "2ememain"]})
         client.post("/resale/sweep")
         status = _wait(client)
         assert status["new_opportunities"] == 0
@@ -355,7 +359,8 @@ def test_sweep_discovers_albums_of_watched_artists():
         client.post("/resale/watchlist/build")
         _wait(client)
         settings = client.get("/resale/settings").json()
-        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"]})
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"],
+                                             "sweep_platforms": ["vinted", "2ememain"]})
         client.post("/resale/sweep")
         status = _wait(client)
         assert status["discovered"] == 1
@@ -392,7 +397,8 @@ def test_budget_in_dollars_and_pistes():
         _wait(client)
         settings = client.get("/resale/settings").json()
         assert settings["daily_budget_usd"] == 0.15 and settings["sweep_max_items"] == 30
-        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"], "verify_top": 0})
+        client.put("/resale/settings", json={**settings, "sweep_queries": ["vinyle soul"], "verify_top": 0,
+                                             "sweep_platforms": ["vinted", "2ememain"], "allow_pistes": True})
         stats = client.get("/resale/stats").json()
         assert stats["sweep_cost_usd"] == 0.06  # 1 requête × 2 plateformes × 30 annonces × 1 $ / 1 000
 
@@ -425,9 +431,34 @@ def test_old_costly_settings_are_upgraded():
         "sweep_queries": ["vinyle soul", "vinyle funk", "vinyle disco", "vinyle afro", "vinyle jazz funk", "vinyle rnb"],
     }
     s = store.settings
-    assert (s.sweep_max_items, s.verify_top, len(s.sweep_queries)) == (30, 3, 4)
+    assert (s.sweep_max_items, s.verify_top, len(s.sweep_queries)) == (30, 5, 4)
     assert s.daily_apify_runs == 50 and s.min_margin == 10  # choix personnels conservés
     store.meta["settings"]["sweep_queries"] = ["vinyle stax"]
     store.meta["settings"]["sweep_max_items"] = 50
     s = store.settings
     assert s.sweep_queries == ["vinyle stax"] and s.sweep_max_items == 50
+
+
+def test_ebay_first_sweep_is_free_and_verified_on_vinted():
+    """Balayage par défaut : eBay (gratuit) sur plusieurs sites, puis vérification payante des seules
+    annonces prometteuses avec les prix Vinted."""
+    world = FakeWorld()  # eBay renvoie l'annonce allemande (12 € + 6,50 €) et une annonce US (exclue)
+    with TestClient(_app(world), base_url="https://testserver") as client:
+        _login(client)
+        client.post("/resale/watchlist/build")
+        _wait(client)
+        settings = client.get("/resale/settings").json()
+        assert settings["sweep_platforms"] == ["ebay"] and settings["allow_pistes"] is False
+        client.put("/resale/settings", json={**settings, "ebay_sweep_queries": ["soul vinyl"],
+                                             "ebay_marketplaces": ["EBAY_DE", "EBAY_FR"]})
+        assert client.get("/resale/stats").json()["sweep_cost_usd"] == 0  # balayage eBay : gratuit
+
+        client.post("/resale/sweep")
+        status = _wait(client)
+        assert {(m, q, sort) for m, q, sort in world.ebay_calls if q == "soul vinyl"} == {
+            ("EBAY_DE", "soul vinyl", "newlyListed"), ("EBAY_FR", "soul vinyl", "newlyListed")}
+        assert status["ebay_calls"] == 2 and status["listings_seen"] == 2  # même annonce dédoublonnée
+        # Vérification Vinted : 1 seule recherche Apify (comparables à 38-42 €), puis opportunité confirmée.
+        assert status["apify_runs"] == 1 and status["new_opportunities"] == 1
+        opp = client.get("/resale/opportunities").json()[0]
+        assert opp["listing"]["platform"] == "ebay" and opp["vinted_median"] == 40 and opp["margin"] == 16.0
