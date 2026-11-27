@@ -10,7 +10,7 @@ from app.discogs.service import album_offers
 from app.discogs.service import DiscogsStore
 from app.geo import Geocoder
 from app.offers.apify import ApifyClient
-from app.offers.ebay import EbayClient
+from app.offers.ebay import EbayClient, EbayError, parse_ebay
 from app.offers.apify import ApifyError
 from app.offers.platforms import PLATFORMS, run_cost
 from app.offers.scoring import discogs_reference_price, score_listings
@@ -54,6 +54,8 @@ class ResaleJob:
     errors: int = 0
     discovered: int = 0  # albums ajoutés à la liste lors du balayage
     cost: float = 0.0  # coût Apify estimé de l'analyse, en dollars
+    ebay_calls: int = 0  # recherches eBay (gratuites)
+    listings_seen: int = 0  # annonces examinées par le balayage
     last_error: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
@@ -269,6 +271,7 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
     job.running, job.phase, job.started_at = True, "balayage des annonces", time.time()
     try:
         listings = await _sweep_listings(ctx, job, rs)
+        job.listings_seen = len(listings)
         job.phase = "rapprochement avec la liste de surveillance"
         matches = _match_watchlist(ctx, listings)
         if rs.discover_new_albums and ctx.discogs is not None:
@@ -312,7 +315,7 @@ async def run_sweep(ctx: ResaleContext, job: ResaleJob) -> None:
         # 3) Évaluation, avec les comparables Vinted exigés.
         job.phase = "évaluation"
         for item, offers, ranked, comps, _ in prepared:
-            await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage", allow_pistes=True)
+            await evaluate_candidates(ctx, item, ranked, comps, offers, job, "balayage", allow_pistes=rs.allow_pistes)
             job.done += 1
     finally:
         job.running, job.phase, job.finished_at = False, "terminé", time.time()
@@ -379,7 +382,25 @@ async def _sweep_listings(ctx: ResaleContext, job: ResaleJob, rs) -> list:
     from app.offers import platforms as platform_config
 
     listings: dict[tuple[str, str], object] = {}
-    for platform in [p for p in ("vinted", "2ememain") if p in rs.platforms]:
+    # eBay : gratuit (API officielle), plusieurs sites européens, annonces les plus récentes.
+    if "ebay" in rs.sweep_platforms and ctx.ebay is not None:
+        for marketplace in rs.ebay_marketplaces:
+            for query in rs.ebay_sweep_queries:
+                try:
+                    items = await ctx.ebay.search(
+                        query, limit=rs.ebay_sweep_max_items, country=ctx.user_settings.country,
+                        marketplace=marketplace, newest_first=True,
+                    )
+                except EbayError as exc:
+                    job.errors += 1
+                    job.last_error = f"eBay {marketplace} : {exc}"[:200]
+                    continue
+                job.ebay_calls += 1
+                for raw in items:
+                    listing = parse_ebay(raw)
+                    if listing is not None:
+                        listings.setdefault(("ebay", listing.external_id), listing)
+    for platform in [p for p in ("vinted", "2ememain") if p in rs.sweep_platforms]:
         config = PLATFORMS[platform]
         for query in rs.sweep_queries:
             if not can_spend(ctx, rs, run_cost(platform, rs.sweep_max_items)):

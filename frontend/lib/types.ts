@@ -180,6 +180,11 @@ export interface ResaleSettings {
   sweep_max_items: number;
   verify_top: number;
   require_vinted_comparables: boolean;
+  sweep_platforms: ("ebay" | "vinted" | "2ememain")[];
+  ebay_sweep_queries: string[];
+  ebay_marketplaces: string[];
+  ebay_sweep_max_items: number;
+  allow_pistes: boolean;
   min_comparables: number;
   discover_new_albums: boolean;
   discovery_min_want: number;
@@ -228,6 +233,8 @@ export interface ResaleStatus {
   discovered?: number;
   cost?: number;
   filtered_total?: number;
+  ebay_calls?: number;
+  listings_seen?: number;
 }
 
 export interface UserSettings {

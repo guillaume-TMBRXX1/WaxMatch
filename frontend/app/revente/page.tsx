@@ -280,6 +280,7 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
           [
             ["require_vinted_comparables", "Exiger des annonces Vinted comparables", "revente sur Vinted : seule la preuve par les prix Vinted compte"],
             ["discover_new_albums", "Découvrir des albums", "annonce d'un artiste suivi, album absent de la liste : recherche Discogs"],
+            ["allow_pistes", "Garder les pistes", "estimées sur la seule cote Discogs (souvent trompeuses), à vérifier à la main"],
             ["require_confirmed_vinyl", "Exiger une preuve que c'est un vinyle", "mention vinyle/LP/33t ou catégorie vinyles"],
             ["exclude_mixed", "Écarter les annonces mixtes", "vinyle + CD, goodies, poster…"],
             ["allow_no_sleeve", "Accepter les disques sans pochette", "forte décote à la revente"],
@@ -321,8 +322,64 @@ function SettingsPanel({ onSaved }: { onSaved: () => void }) {
           </button>
         ))}
       </div>
+      <div className="stack" style={{ gap: 8 }}>
+        <span className="label">Sources du balayage large</span>
+        <div className="cluster">
+          {(["ebay", "vinted", "2ememain"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="pill"
+              aria-pressed={form.sweep_platforms.includes(p)}
+              onClick={() =>
+                setForm({
+                  ...form,
+                  sweep_platforms: form.sweep_platforms.includes(p)
+                    ? form.sweep_platforms.filter((x) => x !== p)
+                    : [...form.sweep_platforms, p],
+                })
+              }
+            >
+              {PLATFORM_LABEL[p]} {p === "ebay" ? "· gratuit" : "· payant"}
+            </button>
+          ))}
+        </div>
+      </div>
       <label className="field">
-        <span className="label">Recherches du balayage large (séparées par des virgules)</span>
+        <span className="label">Recherches eBay (gratuites, séparées par des virgules)</span>
+        <textarea
+          className="input"
+          rows={2}
+          style={{ borderRadius: 16, padding: "10px 16px", minHeight: 64 }}
+          value={form.ebay_sweep_queries.join(", ")}
+          onChange={(e) =>
+            setForm({ ...form, ebay_sweep_queries: e.target.value.split(",").map((q) => q.trim()).filter(Boolean) })
+          }
+        />
+      </label>
+      <div className="cluster">
+        <span className="label">Sites eBay :</span>
+        {["EBAY_DE", "EBAY_FR", "EBAY_BE", "EBAY_NL", "EBAY_IT", "EBAY_ES", "EBAY_GB"].map((m) => (
+          <button
+            key={m}
+            type="button"
+            className="pill"
+            aria-pressed={form.ebay_marketplaces.includes(m)}
+            onClick={() =>
+              setForm({
+                ...form,
+                ebay_marketplaces: form.ebay_marketplaces.includes(m)
+                  ? form.ebay_marketplaces.filter((x) => x !== m)
+                  : [...form.ebay_marketplaces, m],
+              })
+            }
+          >
+            {m.replace("EBAY_", "")}
+          </button>
+        ))}
+      </div>
+      <label className="field">
+        <span className="label">Recherches Vinted / 2ememain du balayage (payantes, séparées par des virgules)</span>
         <textarea
           className="input"
           rows={3}
@@ -488,6 +545,7 @@ export default function ResalePage() {
                   {job!.phase} · {job!.done}/{job!.total} · {job!.new_opportunities} nouvelles opportunités
                   {job!.discovered ? ` · ${job!.discovered} albums découverts` : ""}
                   {job!.cost ? ` · ${job!.cost.toFixed(3)} $` : ""}
+                  {job!.listings_seen ? ` · ${job!.listings_seen} annonces examinées` : ""}
                 </p>
                 <div className="meter" aria-hidden="true">
                   <span style={{ width: `${job!.total ? (100 * job!.done) / job!.total : 5}%` }} />
@@ -540,7 +598,11 @@ export default function ResalePage() {
         </div>
         {!running && job && (job.filtered_total ?? 0) > 0 && (
           <p style={{ margin: "10px 0 0", color: "var(--ink-2)" }}>
-            Dernière analyse : {job.filtered_total} annonces écartées —{" "}
+            Dernière analyse :{" "}
+            {job.listings_seen
+              ? `${job.listings_seen} annonces examinées (${job.ebay_calls ?? 0} recherches eBay gratuites, ${(job.cost ?? 0).toFixed(3)} $ Apify) · `
+              : ""}
+            {job.filtered_total} annonces écartées —{" "}
             {Object.entries(job.filtered ?? {})
               .sort((a, b) => b[1] - a[1])
               .map(([reason, n]) => `${reason} (${n})`)

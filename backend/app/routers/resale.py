@@ -226,7 +226,7 @@ async def stats(request: Request, spotify: SpotifyClient = Depends(get_spotify))
         "spent_month": store.spent_month(),
         "daily_budget": store.settings.daily_budget_usd,
         "sweep_cost_usd": round(
-            sum(run_cost(p, store.settings.sweep_max_items) for p in ("vinted", "2ememain") if p in store.settings.platforms)
+            sum(run_cost(p, store.settings.sweep_max_items) for p in ("vinted", "2ememain") if p in store.settings.sweep_platforms)
             * len(store.settings.sweep_queries),
             2,
         ),
@@ -248,6 +248,6 @@ async def stats(request: Request, spotify: SpotifyClient = Depends(get_spotify))
         "apify_day": store.today().isoformat(),
         # Recherches nécessaires pour un balayage complet (requêtes × plateformes Apify).
         "sweep_cost": len(store.settings.sweep_queries)
-        * len([p for p in ("vinted", "2ememain") if p in store.settings.platforms]),
+        * len([p for p in ("vinted", "2ememain") if p in store.settings.sweep_platforms]),
         "ebay_configured": request.app.state.ebay is not None,
     }
